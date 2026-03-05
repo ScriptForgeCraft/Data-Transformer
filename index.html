@@ -1,0 +1,822 @@
+<!DOCTYPE html>
+<html lang="ru">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Data Processor</title>
+    <meta name="description" content="Unified pipeline: DOCX + Excel to JSON and Excel" />
+    <script type="module" src="/src/app.js" defer></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+        href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Syne:wght@400;600;700;800&display=swap"
+        rel="stylesheet" />
+    <style>
+        *,
+        *::before,
+        *::after {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        :root {
+            --bg: #0a0a0b;
+            --surface: #111113;
+            --surface2: #18181b;
+            --border: #27272a;
+            --border-hover: #3f3f46;
+            --accent: #e8ff47;
+            --accent-dim: rgba(232, 255, 71, .08);
+            --accent-glow: rgba(232, 255, 71, .15);
+            --text: #e4e4e7;
+            --text-muted: #71717a;
+            --success: #4ade80;
+            --success-dim: rgba(74, 222, 128, .1);
+            --error: #f87171;
+            --error-dim: rgba(248, 113, 113, .1);
+            --blue: #60a5fa;
+            --purple: #a78bfa;
+            --orange: #fb923c;
+            --r: 16px;
+            --rs: 10px;
+        }
+
+        body {
+            background: var(--bg);
+            color: var(--text);
+            font-family: 'Syne', system-ui, sans-serif;
+            min-height: 100vh;
+            padding: 40px 20px 80px;
+            overflow-x: hidden;
+        }
+
+        body::before {
+            content: '';
+            position: fixed;
+            top: -50%;
+            left: -50%;
+            width: 200%;
+            height: 200%;
+            background: radial-gradient(ellipse at 30% 20%, rgba(232, 255, 71, .03) 0%, transparent 50%),
+                radial-gradient(ellipse at 70% 60%, rgba(96, 165, 250, .02) 0%, transparent 50%);
+            pointer-events: none;
+            z-index: -1;
+        }
+
+        /* ── Header ─────────────────── */
+        .header {
+            text-align: center;
+            margin-bottom: 40px;
+        }
+
+        .header h1 {
+            font-size: clamp(2rem, 5vw, 3.2rem);
+            font-weight: 800;
+            letter-spacing: -.04em;
+            background: linear-gradient(135deg, var(--accent) 0%, #b8ff47 50%, var(--accent) 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin-bottom: 8px;
+        }
+
+        .header p {
+            color: var(--text-muted);
+            font-family: 'JetBrains Mono', monospace;
+            font-size: .78rem;
+            letter-spacing: .04em;
+        }
+
+        /* ── Mode selection ──────────── */
+        .mode-screen {
+            max-width: 800px;
+            margin: 0 auto;
+        }
+
+        .mode-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 16px;
+            margin-top: 32px;
+        }
+
+        .mode-card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--r);
+            padding: 32px 24px;
+            text-align: center;
+            cursor: pointer;
+            transition: all .25s cubic-bezier(.4, 0, .2, 1);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .mode-card::before {
+            content: '';
+            position: absolute;
+            inset: 0;
+            background: radial-gradient(circle at 50% 100%, var(--accent-glow), transparent 70%);
+            opacity: 0;
+            transition: opacity .3s;
+        }
+
+        .mode-card:hover {
+            border-color: var(--accent);
+            transform: translateY(-4px);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, .4);
+        }
+
+        .mode-card:hover::before {
+            opacity: 1;
+        }
+
+        .mode-icon {
+            font-size: 2.4rem;
+            margin-bottom: 16px;
+            position: relative;
+            z-index: 1;
+        }
+
+        .mode-title {
+            font-size: 1rem;
+            font-weight: 700;
+            margin-bottom: 8px;
+            position: relative;
+            z-index: 1;
+        }
+
+        .mode-desc {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: .7rem;
+            color: var(--text-muted);
+            line-height: 1.5;
+            position: relative;
+            z-index: 1;
+        }
+
+        .mode-card.green:hover {
+            border-color: var(--success);
+        }
+
+        .mode-card.green::before {
+            background: radial-gradient(circle at 50% 100%, rgba(74, 222, 128, .12), transparent 70%);
+        }
+
+        .mode-card.blue:hover {
+            border-color: var(--blue);
+        }
+
+        .mode-card.blue::before {
+            background: radial-gradient(circle at 50% 100%, rgba(96, 165, 250, .12), transparent 70%);
+        }
+
+        .mode-card.orange:hover {
+            border-color: var(--orange);
+        }
+
+        .mode-card.orange::before {
+            background: radial-gradient(circle at 50% 100%, rgba(251, 146, 60, .12), transparent 70%);
+        }
+
+        /* ── Container / Stepper ──────── */
+        .container {
+            max-width: 880px;
+            margin: 0 auto;
+        }
+
+        .stepper {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 0;
+            margin-bottom: 32px;
+        }
+
+        .stepper-step {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px 20px;
+            border-radius: 99px;
+            border: 1px solid var(--border);
+            background: var(--surface);
+            cursor: pointer;
+            transition: all .3s;
+        }
+
+        .stepper-step:hover {
+            border-color: var(--border-hover);
+        }
+
+        .stepper-step.active {
+            border-color: var(--accent);
+            background: var(--accent-dim);
+            box-shadow: 0 0 20px var(--accent-glow);
+        }
+
+        .stepper-step.completed {
+            border-color: var(--success);
+            background: var(--success-dim);
+        }
+
+        .stepper-step .num {
+            width: 26px;
+            height: 26px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: .72rem;
+            font-weight: 700;
+            background: var(--border);
+            color: var(--text-muted);
+            transition: all .3s;
+        }
+
+        .stepper-step.active .num {
+            background: var(--accent);
+            color: #000;
+        }
+
+        .stepper-step.completed .num {
+            background: var(--success);
+            color: #000;
+        }
+
+        .stepper-step .label {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: .72rem;
+            color: var(--text-muted);
+            transition: all .3s;
+        }
+
+        .stepper-step.active .label {
+            color: var(--accent);
+        }
+
+        .stepper-step.completed .label {
+            color: var(--success);
+        }
+
+        .stepper-line {
+            width: 36px;
+            height: 2px;
+            background: var(--border);
+            flex-shrink: 0;
+        }
+
+        /* ── Back button ─────────────── */
+        .back-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            margin-bottom: 20px;
+            background: none;
+            border: 1px solid var(--border);
+            color: var(--text-muted);
+            font-family: 'JetBrains Mono', monospace;
+            font-size: .72rem;
+            padding: 6px 14px;
+            border-radius: 99px;
+            cursor: pointer;
+            transition: all .2s;
+        }
+
+        .back-btn:hover {
+            border-color: var(--accent);
+            color: var(--accent);
+        }
+
+        /* ── Steps ───────────────────── */
+        .step {
+            display: none;
+            animation: fadeIn .35s ease;
+        }
+
+        .step.active {
+            display: block;
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(12px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        /* ── Drop zones ──────────────── */
+        .drop-zone {
+            border: 2px dashed var(--border);
+            border-radius: var(--r);
+            padding: 48px 32px;
+            text-align: center;
+            cursor: pointer;
+            transition: all .25s;
+            position: relative;
+            background: var(--surface);
+            overflow: hidden;
+        }
+
+        .drop-zone::before {
+            content: '';
+            position: absolute;
+            inset: 0;
+            background: radial-gradient(circle at 50% 50%, var(--accent-glow), transparent 70%);
+            opacity: 0;
+            transition: opacity .3s;
+        }
+
+        .drop-zone:hover,
+        .drop-zone.drag-over {
+            border-color: var(--accent);
+            background: var(--accent-dim);
+        }
+
+        .drop-zone:hover::before,
+        .drop-zone.drag-over::before {
+            opacity: 1;
+        }
+
+        .drop-zone.has-file {
+            border-color: var(--success);
+            border-style: solid;
+            background: var(--success-dim);
+        }
+
+        .drop-zone input[type="file"] {
+            position: absolute;
+            inset: 0;
+            opacity: 0;
+            cursor: pointer;
+            width: 100%;
+            height: 100%;
+            z-index: 2;
+        }
+
+        .drop-icon {
+            font-size: 2.6rem;
+            margin-bottom: 12px;
+            position: relative;
+            z-index: 1;
+        }
+
+        .drop-label {
+            font-size: 1rem;
+            font-weight: 700;
+            position: relative;
+            z-index: 1;
+            margin-bottom: 4px;
+        }
+
+        .drop-hint {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: .72rem;
+            color: var(--text-muted);
+            position: relative;
+            z-index: 1;
+        }
+
+        .file-name {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: .76rem;
+            color: var(--accent);
+            margin-top: 10px;
+            position: relative;
+            z-index: 1;
+        }
+
+        /* ── File chips ──────────────── */
+        .file-list {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-top: 14px;
+        }
+
+        .file-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 14px;
+            border-radius: 99px;
+            background: var(--surface2);
+            border: 1px solid var(--border);
+            font-family: 'JetBrains Mono', monospace;
+            font-size: .72rem;
+            color: var(--text);
+        }
+
+        .file-chip-err {
+            border-color: var(--error);
+            color: var(--error);
+        }
+
+        .file-chip-badge {
+            background: var(--accent);
+            color: #000;
+            font-size: .65rem;
+            font-weight: 700;
+            padding: 1px 8px;
+            border-radius: 99px;
+        }
+
+        .file-chip-err .file-chip-badge {
+            background: var(--error);
+            color: #fff;
+        }
+
+        /* ── Status ──────────────────── */
+        .status {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: .76rem;
+            padding: 10px 16px;
+            border-radius: var(--rs);
+            background: var(--surface);
+            border: 1px solid var(--border);
+            color: var(--text-muted);
+            margin-top: 14px;
+            display: none;
+        }
+
+        .status.visible {
+            display: block;
+        }
+
+        .status.ok {
+            color: var(--success);
+            border-color: rgba(74, 222, 128, .3);
+            background: var(--success-dim);
+        }
+
+        .status.err {
+            color: var(--error);
+            border-color: rgba(248, 113, 113, .3);
+            background: var(--error-dim);
+        }
+
+        /* ── Preview ─────────────────── */
+        .preview-wrap {
+            margin-top: 18px;
+        }
+
+        .preview-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 8px;
+        }
+
+        .preview-title {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: .72rem;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: .1em;
+        }
+
+        .badge {
+            display: inline-block;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: .66rem;
+            font-weight: 700;
+            padding: 2px 10px;
+            border-radius: 99px;
+            margin-left: 8px;
+            background: var(--accent);
+            color: #000;
+        }
+
+        .badge.blue {
+            background: var(--blue);
+        }
+
+        .badge.purple {
+            background: var(--purple);
+        }
+
+        .preview {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--r);
+            padding: 20px 24px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: .75rem;
+            line-height: 1.7;
+            white-space: pre-wrap;
+            word-break: break-all;
+            max-height: 380px;
+            overflow-y: auto;
+            color: var(--text);
+            display: none;
+        }
+
+        .preview.visible {
+            display: block;
+        }
+
+        .preview::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        .preview::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        .preview::-webkit-scrollbar-thumb {
+            background: var(--border);
+            border-radius: 3px;
+        }
+
+        .json-key {
+            color: #7dd3fc;
+        }
+
+        .json-str {
+            color: #86efac;
+        }
+
+        .json-num {
+            color: #fbbf24;
+        }
+
+        .json-null {
+            color: #71717a;
+        }
+
+        .json-punct {
+            color: var(--text-muted);
+        }
+
+        /* ── Merge card ──────────────── */
+        .merge-card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--r);
+            padding: 36px 28px;
+            text-align: center;
+        }
+
+        .merge-info {
+            display: flex;
+            justify-content: center;
+            gap: 16px;
+            margin-bottom: 24px;
+            flex-wrap: wrap;
+        }
+
+        .merge-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 16px;
+            border-radius: 99px;
+            border: 1px solid var(--border);
+            background: var(--surface2);
+            font-family: 'JetBrains Mono', monospace;
+            font-size: .73rem;
+            color: var(--text);
+        }
+
+        /* ── Buttons ─────────────────── */
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 12px 24px;
+            border-radius: 99px;
+            border: none;
+            font-family: 'Syne', sans-serif;
+            font-size: .88rem;
+            font-weight: 700;
+            cursor: pointer;
+            transition: all .25s;
+        }
+
+        .btn-primary {
+            background: var(--accent);
+            color: #000;
+            box-shadow: 0 0 20px var(--accent-glow);
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 28px var(--accent-glow);
+        }
+
+        .btn-green {
+            background: var(--success);
+            color: #000;
+            box-shadow: 0 0 20px rgba(74, 222, 128, .2);
+        }
+
+        .btn-green:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 28px rgba(74, 222, 128, .3);
+        }
+
+        .btn-secondary {
+            background: var(--surface2);
+            color: var(--text);
+            border: 1px solid var(--border);
+        }
+
+        .btn-secondary:hover {
+            border-color: var(--accent);
+            color: var(--accent);
+        }
+
+        .btn-secondary.copied {
+            border-color: var(--success);
+            color: var(--success);
+        }
+
+        .btn-group {
+            display: flex;
+            gap: 10px;
+            justify-content: center;
+            margin-top: 18px;
+            flex-wrap: wrap;
+        }
+
+        /* ── Screen transitions ──────── */
+        #pipelineScreen,
+        #jsonConverterScreen {
+            display: none;
+        }
+
+        /* ── Responsive ──────────────── */
+        @media (max-width: 640px) {
+            .stepper {
+                flex-wrap: wrap;
+                gap: 8px;
+            }
+
+            .stepper-line {
+                display: none;
+            }
+
+            .stepper-step .label {
+                display: none;
+            }
+
+            .mode-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="header">
+        <h1>Data Transformer</h1>
+        <p>// docx + xlsx &rarr; unified json &amp; excel</p>
+    </div>
+
+    <!-- ═══ MODE SELECTION SCREEN ═══ -->
+    <div id="modeScreen" class="mode-screen">
+        <div class="mode-grid">
+            <div class="mode-card" id="btnModeWordExcel">
+                <div class="mode-icon">📄 + 📊</div>
+                <div class="mode-title">Word + Excel</div>
+                <div class="mode-desc">1 docx + 1 xlsx &rarr; merged JSON &amp; Excel</div>
+            </div>
+            <div class="mode-card green" id="btnModeMultiExcel">
+                <div class="mode-icon">📊📊📊</div>
+                <div class="mode-title">Multi-Excel</div>
+                <div class="mode-desc">Multiple xlsx files &rarr; combined JSON &amp; Excel</div>
+            </div>
+            <div class="mode-card orange" id="btnModeJsonExcel">
+                <div class="mode-icon">🔄</div>
+                <div class="mode-title">JSON &rarr; Excel</div>
+                <div class="mode-desc">Convert existing JSON to Excel file</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ═══ PIPELINE SCREEN ═══ -->
+    <div id="pipelineScreen">
+        <div class="container">
+            <button class="back-btn" id="btnBackToMode">&larr; back</button>
+
+            <div class="stepper" id="stepperContainer"></div>
+
+            <!-- STEP: Word -->
+            <div class="step" id="stepWord">
+                <div class="drop-zone" id="wordDropZone">
+                    <input type="file" id="wordInput" accept=".docx" />
+                    <div class="drop-icon">📄</div>
+                    <div class="drop-label">Drop .docx file here</div>
+                    <div class="drop-hint">or click to select</div>
+                    <div class="file-name" id="wordFileName"></div>
+                </div>
+                <div class="status" id="wordStatus"></div>
+                <div class="preview-wrap">
+                    <div class="preview-header">
+                        <span class="preview-title">json output <span class="badge" id="wordKeyCount">0</span></span>
+                        <button class="btn btn-secondary" id="btnEditWordJson"
+                            style="padding: 4px 10px; font-size: 0.7rem; border-radius: 4px; display:none;">Edit
+                            JSON</button>
+                    </div>
+                    <pre class="preview" id="wordPreview"></pre>
+                    <textarea id="wordTextarea" class="preview"
+                        style="display:none; width:100%; height:380px; resize:vertical; font-family:'JetBrains Mono', monospace; background:var(--surface); color:var(--text); border:1px solid var(--accent); white-space:pre;"
+                        spellcheck="false"></textarea>
+                </div>
+            </div>
+
+            <!-- STEP: Excel -->
+            <div class="step" id="stepExcel">
+                <div class="drop-zone" id="excelDropZone">
+                    <input type="file" id="excelInput" accept=".xlsx,.xls" />
+                    <div class="drop-icon">📊</div>
+                    <div class="drop-label">Drop .xlsx file(s) here</div>
+                    <div class="drop-hint">or click to select</div>
+                </div>
+                <div class="file-list" id="excelFileList"></div>
+                <div class="status" id="excelStatus"></div>
+                <div class="preview-wrap">
+                    <div class="preview-header">
+                        <span class="preview-title">apartments <span class="badge blue"
+                                id="excelFlatCount">0</span></span>
+                        <button class="btn btn-secondary" id="btnEditExcelJson"
+                            style="padding: 4px 10px; font-size: 0.7rem; border-radius: 4px; display:none;">Edit
+                            JSON</button>
+                    </div>
+                    <pre class="preview" id="excelPreview"></pre>
+                    <textarea id="excelTextarea" class="preview"
+                        style="display:none; width:100%; height:380px; resize:vertical; font-family:'JetBrains Mono', monospace; background:var(--surface); color:var(--text); border:1px solid var(--accent); white-space:pre;"
+                        spellcheck="false"></textarea>
+                </div>
+            </div>
+
+            <!-- STEP: Merge -->
+            <div class="step" id="stepMerge">
+                <div class="merge-card">
+                    <div class="merge-info">
+                        <div class="merge-chip" id="mergeWordChip"><span>📄</span> Word &rarr; project</div>
+                        <div class="merge-chip"><span>📊</span> Excel &rarr; apartments</div>
+                    </div>
+                    <button class="btn btn-primary" id="mergeBtn"><span>🔗</span> Merge</button>
+                </div>
+                <div class="status" id="mergeStatus"></div>
+                <div class="preview-wrap">
+                    <div class="preview-header">
+                        <span class="preview-title">merged output <span class="badge purple">final</span></span>
+                        <button class="btn btn-secondary" id="btnEditMergeJson"
+                            style="padding: 4px 10px; font-size: 0.7rem; border-radius: 4px;">Edit JSON</button>
+                    </div>
+                    <pre class="preview" id="mergePreview"></pre>
+                    <textarea id="mergeTextarea" class="preview"
+                        style="display:none; width:100%; height:380px; resize:vertical; font-family:'JetBrains Mono', monospace; background:var(--surface); color:var(--text); border:1px solid var(--accent); white-space:pre;"
+                        spellcheck="false"></textarea>
+                </div>
+                <div class="btn-group">
+                    <button class="btn btn-primary" id="downloadJsonBtn" style="display:none"><span>⬇</span>
+                        JSON</button>
+                    <button class="btn btn-green" id="downloadExcelBtn" style="display:none"><span>⬇</span>
+                        Excel</button>
+                    <button class="btn btn-secondary" id="copyBtn" style="display:none">copy</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ═══ JSON → EXCEL CONVERTER SCREEN ═══ -->
+    <div id="jsonConverterScreen">
+        <div class="container">
+            <button class="back-btn" id="btnBackToMode2">&larr; back</button>
+            <div class="drop-zone" id="jsonDropZone" style="padding: 20px;">
+                <input type="file" id="jsonInput" accept=".json" />
+                <div class="drop-icon" style="font-size: 1.5rem; margin-bottom: 4px;">🔄</div>
+                <div class="drop-label">Drop .json file here to load</div>
+                <div class="file-name" id="jsonFileName"></div>
+            </div>
+
+            <div style="margin-top: 16px;">
+                <div class="preview-header">
+                    <span class="preview-title">JSON Editor (Fix errors here before pipeline)</span>
+                </div>
+                <textarea id="jsonTextInput" spellcheck="false" placeholder="Paste or edit JSON here..."
+                    style="width:100%; height:300px; background:var(--surface); color:var(--text); border:1px solid var(--border); border-radius:var(--r); padding:16px; font-family:'JetBrains Mono', monospace; font-size:0.8rem; resize:vertical; line-height: 1.5;"></textarea>
+            </div>
+
+            <div class="btn-group" style="margin-top: 16px;">
+                <button class="btn btn-primary" id="btnProcessJsonText"><span>⚙️</span> Parse & Process JSON</button>
+                <button class="btn btn-green" id="downloadFromJsonBtn" style="display:none"><span>⬇</span> Download
+                    Excel</button>
+            </div>
+            <div class="status" id="jsonStatus"></div>
+        </div>
+    </div>
+</body>
+
+</html>
