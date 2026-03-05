@@ -1,4 +1,5 @@
 import * as XLSX from "xlsx";
+import { getStoredColumnSettings } from "../components/columnManager.js";
 
 /**
  * Convert an array of apartment objects to an Excel workbook Blob.
@@ -21,12 +22,23 @@ export function createExcelFromData(apartments, projectData = null) {
         const allKeys = new Set();
         apartments.forEach(flat => Object.keys(flat).forEach(k => allKeys.add(k)));
 
-        // Filter preferred order to only include keys that exist in the data
-        const standardHeaders = preferredOrder.filter(k => allKeys.has(k));
+        let headers = [];
+        const settings = getStoredColumnSettings();
+        const hasCustomOrder = settings && settings.order && settings.order.length > 0;
 
-        // Add any extra headers that aren't in the standard list
-        const extraHeaders = Array.from(allKeys).filter(k => !standardHeaders.includes(k));
-        const headers = [...standardHeaders, ...extraHeaders];
+        if (hasCustomOrder) {
+            headers = settings.order
+                .map(orig => (settings.renamed && settings.renamed[orig]) ? settings.renamed[orig] : orig)
+                .filter(k => allKeys.has(k));
+            const extraHeaders = Array.from(allKeys).filter(k => !headers.includes(k));
+            headers = [...headers, ...extraHeaders];
+        } else {
+            // Filter preferred order to only include keys that exist in the data
+            const standardHeaders = preferredOrder.filter(k => allKeys.has(k));
+            // Add any extra headers that aren't in the standard list
+            const extraHeaders = Array.from(allKeys).filter(k => !standardHeaders.includes(k));
+            headers = [...standardHeaders, ...extraHeaders];
+        }
 
         const rows = apartments.map(flat => headers.map(h => flat[h] ?? ""));
         const wsData = [headers, ...rows];

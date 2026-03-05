@@ -15,26 +15,35 @@ export const COLUMN_METADATA = {
     "source_file": { desc: "The name of the source Excel file." }
 };
 
-/**
- * Applies saved column settings (deletions + renames) to data array.
- * Can be called statically without an instance — e.g. right after merge.
- * Returns new array with columns removed/renamed per stored settings.
- */
 export function applyStoredColumnSettings(data) {
     if (!data || !data.length) return data;
 
     const saved = loadColumnSettings();
     if (!saved) return data;
 
-    const { deleted, renamed } = saved;
+    const { deleted, renamed, order } = saved;
     const hasDeleted = deleted && deleted.length > 0;
     const hasRenamed = renamed && Object.keys(renamed).length > 0;
+    const hasOrder = order && order.length > 0;
 
-    if (!hasDeleted && !hasRenamed) return data;
+    if (!hasDeleted && !hasRenamed && !hasOrder) return data;
 
     return data.map(item => {
         const newItem = {};
-        for (const key of Object.keys(item)) {
+
+        // Determine the order to process keys
+        const itemKeys = Object.keys(item);
+        let keysToProcess = itemKeys;
+
+        if (hasOrder) {
+            // Start with strictly ordered keys that exist in the item
+            const orderedKeys = order.filter(k => itemKeys.includes(k));
+            // Add any remaining keys that weren't in the saved order
+            const remainingKeys = itemKeys.filter(k => !order.includes(k));
+            keysToProcess = [...orderedKeys, ...remainingKeys];
+        }
+
+        for (const key of keysToProcess) {
             // Skip deleted columns
             if (hasDeleted && deleted.includes(key)) continue;
             // Rename if needed
@@ -53,6 +62,10 @@ function loadColumnSettings() {
     } catch {
         return null;
     }
+}
+
+export function getStoredColumnSettings() {
+    return loadColumnSettings();
 }
 
 function saveColumnSettings(settings) {
@@ -121,11 +134,23 @@ export class ColumnManager {
                 if (!allKeys.has(delKey)) {
                     this.columns.push({
                         origName: delKey,
-                        newName: delKey,
+                        newName: (saved.renamed && saved.renamed[delKey]) ? saved.renamed[delKey] : delKey,
                         deleted: true
                     });
                 }
             }
+        }
+
+        // Sort according to saved order if present
+        if (saved && saved.order && saved.order.length > 0) {
+            this.columns.sort((a, b) => {
+                const idxA = saved.order.indexOf(a.origName);
+                const idxB = saved.order.indexOf(b.origName);
+                if (idxA !== -1 && idxB !== -1) return idxA - idxB;
+                if (idxA !== -1) return -1;
+                if (idxB !== -1) return 1;
+                return 0; // both unknown, keep original relative order
+            });
         }
 
         this.render();
@@ -173,9 +198,48 @@ export class ColumnManager {
             this.body.appendChild(indicator);
         }
 
+        let dragStartIndex = -1;
+
         this.columns.forEach((col, index) => {
             const row = document.createElement("div");
             row.className = `col-row ${col.deleted ? "deleted" : ""}`;
+            row.draggable = true;
+
+            row.addEventListener("dragstart", (e) => {
+                dragStartIndex = index;
+                e.dataTransfer.effectAllowed = "move";
+                requestAnimationFrame(() => {
+                    row.classList.add("dragging");
+                });
+            });
+
+            row.addEventListener("dragover", (e) => {
+                e.preventDefault(); // strictly necessary to allow drop
+                if (dragStartIndex === index) return;
+                row.classList.add("drag-over");
+            });
+
+            row.addEventListener("dragleave", () => {
+                row.classList.remove("drag-over");
+            });
+
+            row.addEventListener("drop", (e) => {
+                e.preventDefault();
+                row.classList.remove("drag-over");
+                if (dragStartIndex === -1 || dragStartIndex === index) return;
+
+                // Move item in array
+                const itemToMove = this.columns.splice(dragStartIndex, 1)[0];
+                this.columns.splice(index, 0, itemToMove);
+
+                // Re-render
+                this.render();
+            });
+
+            row.addEventListener("dragend", () => {
+                row.classList.remove("dragging");
+                dragStartIndex = -1;
+            });
 
             const meta = COLUMN_METADATA[col.origName] || { desc: "Custom or extracted property." };
 
@@ -223,8 +287,10 @@ export class ColumnManager {
         // Build settings to persist
         const deleted = [];
         const renamed = {};
+        const order = [];
 
         this.columns.forEach(col => {
+            order.push(col.origName);
             if (col.deleted) {
                 deleted.push(col.origName);
             } else if (col.newName && col.newName !== col.origName) {
@@ -233,7 +299,7 @@ export class ColumnManager {
         });
 
         // Persist to localStorage
-        saveColumnSettings({ deleted, renamed });
+        saveColumnSettings({ deleted, renamed, order });
 
         // Apply transformations to data
         const transformedData = this.mergedData.map(item => {
