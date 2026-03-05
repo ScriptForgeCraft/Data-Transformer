@@ -54,16 +54,23 @@ export function textToNumber(text) {
 export function parseNumericCell(raw) {
     if (typeof raw === "number") return raw;
     if (typeof raw === "string") {
-        const lower = raw.toLowerCase();
+        const lower = raw.toLowerCase().trim();
+        if (!lower) return null;
+
+        // Reject things that are clearly dates, phone numbers, or complex IDs
+        if ((raw.match(/[-/\\]/g) || []).length >= 2) return null; // IDs like A-15-1 or dates 2024/02/01
+        if (/\d{2}\.\d{2}\.\d{4}/.test(raw)) return null; // 15.10.2023
+        if (/[a-zа-яա-ֆ]/i.test(raw) && (raw.match(/\d/g) || []).length >= 8) return null; // Random hash/ID containing letters
+
+        const digitCount = (raw.match(/\d/g) || []).length;
+        if (digitCount >= 11) return null; // Prices >= 100 billion are virtually impossible, this is a phone/account number
 
         // Check if string contains textual multipliers
         const hasMillions = /միլիոն|մլն|миллион|млн|million|mil|\bm\b/.test(lower);
-        // Added 'հզ' explicitly to thousands matchers
         const hasThousands = /հազար|հազ|հզ|тысяч|тыс|thousand|\bk\b/.test(lower);
 
         if (hasMillions || hasThousands) {
             let total = 0;
-            // Added 'հզ' to regex word options
             const regex = /(\d[\d.,]*)\s*(միլիոն|մլն|миллиոն|млն|million|mil|m|հազար|հազ|հզ|тысяч|тыс|thousand|k)?/gi;
             let match;
 
@@ -91,7 +98,9 @@ export function parseNumericCell(raw) {
         const cleaned = raw
             .replace(/[\u2024\u00b7\u0589\u02D9\u066B\u066C]/g, ".")
             .replace(/\s/g, "")
-            .replace(/[^\d.]/g, "");
+            .replace(/[^\d.-]/g, "");
+
+        if (!cleaned || cleaned === "-") return null;
 
         const parsed = parseFloat(cleaned);
         return isNaN(parsed) ? null : parsed;
@@ -129,12 +138,45 @@ export function hasAreaSymbol(str) {
     return AREA_SYMBOLS.some(sym => s.includes(sym));
 }
 
-export function findPriceInRow(row, excludeCols = []) {
+export function detectCurrency(str) {
+    if (typeof str !== "string") return null;
+    const s = str.toLowerCase();
+    if (s.includes("$") || s.includes("usd")) return "$";
+    if (s.includes("€") || s.includes("eur")) return "€";
+    if (s.includes("₽") || s.includes("rub")) return "₽";
+    if (s.includes("֏") || s.includes("amd") || s.includes("դրամ")) return "֏";
+    return null;
+}
+
+export function classifyPrice(val, currency) {
+    if (val === null || val < 100) return null; // Too small to be a realistic price/sqm
+
+    if (currency === "$" || currency === "€") {
+        if (val >= 8000) return "total";
+        return "sqm";
+    } else if (currency === "₽") {
+        if (val < 50000) return null;
+        if (val >= 1000000) return "total";
+        return "sqm";
+    } else if (currency === "֏") {
+        if (val >= 4000000) return "total";
+        return "sqm";
+    } else {
+        // Unknown currency
+        if (val >= 4000000) return "total"; // Clearly AMD total price
+        if (val >= 100000) return "sqm"; // AMD price_sqm or large USD total. Usually in AMD, this is price per sqm.
+        if (val >= 8000) return "total"; // Small USD total
+        return "sqm"; // USD sqm
+    }
+}
+
+export function findPriceAndCurrencyInRow(row, excludeCols = []) {
     for (let col = 0; col < row.length; col++) {
         if (excludeCols.includes(col)) continue;
         const cell = String(row[col] || "");
         if (hasCurrencySymbol(cell)) {
-            return parseNumericCell(cell);
+            const val = parseNumericCell(cell);
+            if (val !== null) return { value: val, currency: detectCurrency(cell) };
         }
     }
     return null;
@@ -151,46 +193,40 @@ export function findAreaInRow(row, excludeCols = []) {
     return null;
 }
 
-export function extractFallbackValues(row, skipColsRaw, area, currentPrice, currentPriceSqm) {
+export function extractFallbackValues(row, skipColsRaw, area, currentPrice, currentPriceSqm, currentCurrency) {
     const skipCols = new Set(skipColsRaw);
     let price = currentPrice;
     let price_sqm = currentPriceSqm;
+    let currency = currentCurrency;
 
     const unused = [];
     for (let c = 0; c < row.length; c++) {
         if (skipCols.has(c)) continue;
+        const cellStr = String(row[c] || "");
         const val = parseNumericCell(row[c]);
-        // Also skip if it exactly matches the area we extracted
+        const cellCurrency = detectCurrency(cellStr);
         if (val !== null && val !== area) {
-            unused.push({ col: c, val });
+            unused.push({ col: c, val, currency: cellCurrency });
         }
     }
 
-    if (unused.length === 0) return { price, price_sqm };
+    if (unused.length === 0) return { price, price_sqm, currency };
 
-    if (price === null) {
-        const idx = unused.findIndex(x => looksLikeSafePrice(x.val));
-        if (idx >= 0) {
-            price = unused[idx].val;
-            unused.splice(idx, 1);
+    for (let i = unused.length - 1; i >= 0; i--) {
+        const item = unused[i];
+        const effCurrency = item.currency || currency;
+        const type = classifyPrice(item.val, effCurrency);
+
+        if (type === "total" && price === null) {
+            price = item.val;
+            if (item.currency && !currency) currency = item.currency;
+            unused.splice(i, 1);
+        } else if (type === "sqm" && price_sqm === null) {
+            price_sqm = item.val;
+            if (item.currency && !currency) currency = item.currency;
+            unused.splice(i, 1);
         }
     }
 
-    if (price_sqm === null) {
-        const idx = unused.findIndex(x => (x.val >= 250 && x.val <= 20000) || (x.val >= 100000 && x.val <= 5000000));
-        if (idx >= 0) {
-            price_sqm = unused[idx].val;
-            unused.splice(idx, 1);
-        }
-    }
-
-    if (price === null) {
-        const idx = unused.findIndex(x => looksLikePrice(x.val) || x.val >= 10000);
-        if (idx >= 0) {
-            price = unused[idx].val;
-            unused.splice(idx, 1);
-        }
-    }
-
-    return { price, price_sqm };
+    return { price, price_sqm, currency };
 }

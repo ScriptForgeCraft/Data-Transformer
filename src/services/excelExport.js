@@ -13,7 +13,7 @@ export function createExcelFromData(apartments, projectData = null) {
     if (apartments.length > 0) {
         const standardHeaders = [
             "building", "sheet", "floor", "id", "rooms",
-            "price", "price_sqm", "area", "area_orig", "status"
+            "price", "price_sqm", "area", "area_orig", "status", "currency"
         ];
 
         // Gather all unique keys from all objects to catch Word properties
@@ -26,6 +26,23 @@ export function createExcelFromData(apartments, projectData = null) {
         const rows = apartments.map(flat => headers.map(h => flat[h] ?? ""));
         const wsData = [headers, ...rows];
         const ws = XLSX.utils.aoa_to_sheet(wsData);
+
+        for (let R = 1; R <= rows.length; ++R) {
+            const flat = apartments[R - 1];
+            const curLabel = String(flat.currency || "").trim();
+            for (let C = 0; C < headers.length; ++C) {
+                if (headers[C] === "price" || headers[C] === "price_sqm") {
+                    const cellAddress = XLSX.utils.encode_cell({ r: R, c: C });
+                    const cell = ws[cellAddress];
+                    if (cell && cell.t === "n") {
+                        if (curLabel === "$") cell.z = '"$"#,##0';
+                        else if (curLabel === "€") cell.z = '[$€-2] #,##0';
+                        else if (curLabel === "֏") cell.z = '#,##0 [$֏]';
+                        else if (curLabel === "₽") cell.z = '#,##0 [$₽-419]';
+                    }
+                }
+            }
+        }
 
         // Auto-width columns
         ws["!cols"] = headers.map((h, i) => {

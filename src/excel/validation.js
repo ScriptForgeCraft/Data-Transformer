@@ -1,11 +1,11 @@
 import { AREA_MIN, AREA_MAX } from "./constants.js";
-import { looksLikePrice } from "./utils.js";
+import { looksLikePrice, classifyPrice } from "./utils.js";
 
 // ── Пост-валидация: перекрёстная проверка всех полей ─────────────────────────
 // ПРИНЦИП: если значение уже 100% привязано к полю, оно не может
 //          повторно использоваться для другого поля.
 export function postValidateFlat(flat) {
-    let { id, area, area_orig, price, price_sqm, rooms } = flat;
+    let { id, area, area_orig, price, price_sqm, rooms, currency } = flat;
 
     // Множество «занятых» значений (чтобы одно значение не попало в два поля)
     const claimedValues = new Set();
@@ -84,7 +84,7 @@ export function postValidateFlat(flat) {
     }
 
     // ── 5. Слишком маленькая «цена» — это не цена ────────────────────────────
-    if (price !== null && price < 1000 && !looksLikePrice(price)) {
+    if (price !== null && classifyPrice(price, currency) === null && !looksLikePrice(price)) {
         if (id === null && Number.isInteger(price) && price < 500 && !isClaimed(String(price))) {
             id = String(price);
             claimedValues.add(id);
@@ -93,7 +93,7 @@ export function postValidateFlat(flat) {
     }
 
     // ── 6. Слишком большая «площадь» — вероятно, это цена ───────────────────
-    if (area !== null && area > AREA_MAX && looksLikePrice(area)) {
+    if (area !== null && area > AREA_MAX && (classifyPrice(area, currency) !== null || looksLikePrice(area))) {
         if (price === null) {
             price = area;
         }
@@ -115,7 +115,7 @@ export function postValidateFlat(flat) {
         }
     }
 
-    return { ...flat, id, area, area_orig, price, price_sqm, rooms };
+    return { ...flat, id, area, area_orig, price, price_sqm, rooms, currency };
 }
 
 // ── Слияние спаренных строк ───────────────────────────────────────────────────
@@ -150,7 +150,8 @@ export function mergeAdjacentFlats(flats) {
                     price: next.price,
                     price_sqm: next.price_sqm,
                     rooms: current.rooms || next.rooms,
-                    status: current.status || next.status
+                    status: current.status || next.status,
+                    currency: current.currency || next.currency
                 };
 
                 if (mergedFlat.area && mergedFlat.area > 0) {
@@ -176,7 +177,8 @@ export function mergeAdjacentFlats(flats) {
                     price: current.price,
                     price_sqm: current.price_sqm,
                     rooms: next.rooms || current.rooms,
-                    status: next.status || current.status
+                    status: next.status || current.status,
+                    currency: next.currency || current.currency
                 };
 
                 if (mergedFlat.area && mergedFlat.area > 0) {

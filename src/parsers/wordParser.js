@@ -1,33 +1,8 @@
 import mammoth from "mammoth";
 
-function splitMergedLines(line) {
-    const results = [];
-    const segmentPattern = /(?<=\S)\s+(?=[^\s\d,.()\[\]{}'"-–—][^-–—\n]{1,}(?:\s[-–—]|[-–—]\s))/g;
-    const splitPoints = [];
-    let m;
-    while ((m = segmentPattern.exec(line)) !== null) {
-        splitPoints.push(m.index + m[0].length);
-    }
-    if (splitPoints.length === 0) return [line];
-    const validSplits = splitPoints.filter(pos => {
-        const after = line.slice(pos);
-        return /^.+?(?:\s[-–—]|[-–—]\s).+$/.test(after);
-    });
-    if (validSplits.length === 0) return [line];
-    let prev = 0;
-    for (const pos of validSplits) {
-        results.push(line.slice(prev, pos).trim());
-        prev = pos;
-    }
-    results.push(line.slice(prev).trim());
-    return results.filter(Boolean);
-}
 
-function splitKeyValue(line) {
-    const match = line.match(/^(.+?)(?:\s[-–—]|[-–—]\s)\s*(.+)$/);
-    if (!match) return null;
-    return { key: match[1].trim(), value: match[2].trim().replace(/\s+/g, " ") };
-}
+
+
 
 export function parseTextToJSON(text) {
     const rawLines = text.split(/\r?\n/);

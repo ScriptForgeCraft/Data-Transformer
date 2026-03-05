@@ -1,6 +1,6 @@
 import * as XLSX from "xlsx";
 import { flatIdPattern, PRICE_MIN_THRESHOLD } from "./constants.js";
-import { parseNumericCell } from "./utils.js";
+import { parseNumericCell, detectCurrency, classifyPrice } from "./utils.js";
 import { isAlternatingLayout, hasHeaderRow } from "./layout.js";
 import { processHeaderBlock, processNoHeaderSheet } from "./processors.js";
 import { postValidateFlat, mergeAdjacentFlats } from "./validation.js";
@@ -40,17 +40,26 @@ export async function parseExcelFile(file) {
                 for (let col = 1; col + 1 < dataRow.length; col += 2) {
                     const id = dataRow[col];
                     const area = dataRow[col + 1];
-                    const priceRaw = priceRow ? parseNumericCell(priceRow[col + 1]) : null;
+                    const priceCell = priceRow ? priceRow[col + 1] : null;
+                    const priceRaw = priceCell !== null ? parseNumericCell(priceCell) : null;
+                    const currency = detectCurrency(String(priceCell || ""));
 
                     if (id === null && area === null) continue;
 
                     let price = null;
                     let price_sqm = null;
                     if (priceRaw !== null) {
-                        if (priceRaw >= PRICE_MIN_THRESHOLD) {
+                        const type = classifyPrice(priceRaw, currency);
+                        if (type === "total") {
                             price = priceRaw;
-                        } else {
+                        } else if (type === "sqm") {
                             price_sqm = priceRaw;
+                        } else {
+                            if (priceRaw >= PRICE_MIN_THRESHOLD) {
+                                price = priceRaw;
+                            } else {
+                                price_sqm = priceRaw;
+                            }
                         }
                     }
 
@@ -74,7 +83,8 @@ export async function parseExcelFile(file) {
                         price_sqm,
                         area: areaVal,
                         area_orig: areaVal,
-                        status: null
+                        status: null,
+                        currency
                     };
                     const validatedFlat = postValidateFlat(rawFlat);
                     if (!validatedFlat.id && !validatedFlat.area && !validatedFlat.price) continue;
@@ -113,8 +123,23 @@ export async function parseExcelFile(file) {
                     for (let col = 0; col < idsRow.length; col++) {
                         const id = idsRow[col];
                         if (typeof id === "string" && flatIdPattern.test(id.trim())) {
-                            const price = typeof pricesRow[col] === "number" ? pricesRow[col] : null;
+                            const priceVal = typeof pricesRow[col] === "number" ? pricesRow[col] : parseNumericCell(pricesRow[col]);
                             const area = typeof areasRow[col] === "number" ? areasRow[col] : null;
+                            const currency = detectCurrency(String(pricesRow[col] || ""));
+
+                            let finalPrice = null;
+                            let finalPriceSqm = null;
+                            if (priceVal !== null) {
+                                const type = classifyPrice(priceVal, currency);
+                                if (type === "total") {
+                                    finalPrice = priceVal;
+                                } else if (type === "sqm") {
+                                    finalPriceSqm = priceVal;
+                                } else {
+                                    if (priceVal >= PRICE_MIN_THRESHOLD) finalPrice = priceVal;
+                                    else finalPriceSqm = priceVal;
+                                }
+                            }
 
                             allFlats.push({
                                 building: buildingNameFallback,
@@ -122,11 +147,12 @@ export async function parseExcelFile(file) {
                                 floor,
                                 id: id.trim(),
                                 rooms: null,
-                                price,
-                                price_sqm: null,
+                                price: finalPrice,
+                                price_sqm: finalPriceSqm,
                                 area,
                                 area_orig: null,
-                                status: null
+                                status: null,
+                                currency
                             });
                         }
                     }

@@ -5,7 +5,8 @@ import {
     looksLikeArea,
     looksLikePrice,
     findAreaInRow,
-    findPriceInRow,
+    findPriceAndCurrencyInRow,
+    detectCurrency,
     extractFallbackValues
 } from "./utils.js";
 import { determineColumnMappingAsync } from "./layout.js";
@@ -59,19 +60,36 @@ function extractFlatFromRow(row, headers, buildingName, sheetName, lastFloor) {
 
     // ── Цена ────────────────────────────────────────────────────────────────
     let price = null;
+    let currency = null;
+
     if (headers.price_total !== undefined && row[headers.price_total] != null) {
-        price = parseNumericCell(row[headers.price_total]);
+        const cellVal = row[headers.price_total];
+        price = parseNumericCell(cellVal);
+        currency = detectCurrency(String(cellVal || ""));
     }
-    if (price === null) price = findPriceInRow(row, Object.values(headers));
+
+    if (price === null) {
+        const pInfo = findPriceAndCurrencyInRow(row, Object.values(headers));
+        if (pInfo) {
+            price = pInfo.value;
+            currency = pInfo.currency;
+        }
+    }
 
     let price_sqm = headers.price_sqm !== undefined
         ? parseNumericCell(row[headers.price_sqm])
         : null;
 
+    if (price_sqm !== null && !currency && headers.price_sqm !== undefined) {
+        const cellVal = row[headers.price_sqm];
+        currency = detectCurrency(String(cellVal || ""));
+    }
+
     // Fallback: анализ незанятых ячеек
-    const fb = extractFallbackValues(row, Object.values(headers), area, price, price_sqm);
+    const fb = extractFallbackValues(row, Object.values(headers), area, price, price_sqm, currency);
     price = fb.price;
     price_sqm = fb.price_sqm;
+    if (fb.currency && !currency) currency = fb.currency;
 
     // ── Комнаты / Статус ────────────────────────────────────────────────────
     const rooms = headers.rooms !== undefined
@@ -97,7 +115,7 @@ function extractFlatFromRow(row, headers, buildingName, sheetName, lastFloor) {
         }
     }
 
-    return { id, area, area_orig, price, price_sqm, rooms, status, floor: lastFloor };
+    return { id, area, area_orig, price, price_sqm, rooms, status, floor: lastFloor, currency };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -135,7 +153,8 @@ export function processHeaderBlock(data, blockInfo, buildingName, sheetName, all
             price_sqm: extracted.price_sqm,
             area: extracted.area,
             area_orig: extracted.area_orig,
-            status: extracted.status
+            status: extracted.status,
+            currency: extracted.currency
         };
 
         const validatedFlat = postValidateFlat(rawFlat);
@@ -196,7 +215,8 @@ export function processNoHeaderSheet(data, buildingName, sheetName, allFlats) {
             price_sqm: extracted.price_sqm,
             area: extracted.area,
             area_orig: extracted.area_orig,
-            status: extracted.status
+            status: extracted.status,
+            currency: extracted.currency
         };
 
         const validatedFlat = postValidateFlat(rawFlat);
