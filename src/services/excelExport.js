@@ -11,15 +11,20 @@ export function createExcelFromData(apartments, projectData = null) {
 
     // ── Sheet 1: Apartments ──────────────────────────────────────────────────
     if (apartments.length > 0) {
-        const standardHeaders = [
+        // Preferred order for known headers
+        const preferredOrder = [
             "building", "sheet", "floor", "id", "rooms",
             "price", "price_sqm", "area", "area_orig", "status", "currency"
         ];
 
-        // Gather all unique keys from all objects to catch Word properties
+        // Gather all unique keys from all objects to see what actually exists
         const allKeys = new Set();
         apartments.forEach(flat => Object.keys(flat).forEach(k => allKeys.add(k)));
 
+        // Filter preferred order to only include keys that exist in the data
+        const standardHeaders = preferredOrder.filter(k => allKeys.has(k));
+
+        // Add any extra headers that aren't in the standard list
         const extraHeaders = Array.from(allKeys).filter(k => !standardHeaders.includes(k));
         const headers = [...standardHeaders, ...extraHeaders];
 

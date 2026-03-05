@@ -3,7 +3,7 @@ import { parseExcelFile } from "./excel/excelParser.js";
 import { mergeProjectData } from "./services/mergeService.js";
 import { createExcelFromData, jsonToExcel } from "./services/excelExport.js";
 import { initAnalytics, showAnalyticsScreen } from "./analytics/analytics.js";
-import { ColumnManager } from "./components/columnManager.js";
+import { ColumnManager, applyStoredColumnSettings } from "./components/columnManager.js";
 
 // ── State ────────────────────────────────────────────────────────────────────
 let wordData = null;
@@ -350,6 +350,9 @@ function doMerge() {
             // Multi-excel: just the apartments
             mergedData = [...allFlats];
         }
+
+        // Auto-apply saved column settings (deletions + renames) from localStorage
+        mergedData = applyStoredColumnSettings(mergedData);
 
         renderJSON(mergePreview, mergedData, 80);
         // Reset edit mode
