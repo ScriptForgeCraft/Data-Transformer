@@ -647,6 +647,147 @@
             flex-wrap: wrap;
         }
 
+        /* ── Column Manager Modal ────── */
+        .col-manager-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.7);
+            backdrop-filter: blur(4px);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.3s;
+        }
+
+        .col-manager-overlay.visible {
+            opacity: 1;
+            pointer-events: auto;
+        }
+
+        .col-manager-modal {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--r);
+            width: 90%;
+            max-width: 700px;
+            max-height: 85vh;
+            display: flex;
+            flex-direction: column;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.5);
+            transform: translateY(20px);
+            transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        .col-manager-overlay.visible .col-manager-modal {
+            transform: translateY(0);
+        }
+
+        .col-manager-header {
+            padding: 20px 24px;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .col-manager-title {
+            font-size: 1.2rem;
+            font-weight: 800;
+            color: var(--text);
+        }
+
+        .col-manager-body {
+            padding: 20px 24px;
+            overflow-y: auto;
+            flex-grow: 1;
+        }
+
+        .col-row {
+            display: grid;
+            grid-template-columns: 2fr 3fr auto;
+            gap: 12px;
+            align-items: center;
+            padding: 12px 0;
+            border-bottom: 1px solid var(--border-hover);
+            transition: opacity 0.2s, background 0.2s;
+        }
+
+        .col-row:last-child {
+            border-bottom: none;
+        }
+
+        .col-row.deleted {
+            opacity: 0.4;
+            background: rgba(248, 113, 113, 0.05);
+        }
+
+        .col-info {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .col-name-orig {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.85rem;
+            color: var(--text);
+            font-weight: 700;
+        }
+
+        .col-desc {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            line-height: 1.3;
+        }
+
+        .col-input {
+            width: 100%;
+            background: var(--surface2);
+            border: 1px solid var(--border);
+            color: var(--text);
+            padding: 8px 12px;
+            border-radius: 6px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.85rem;
+            transition: border-color 0.2s;
+        }
+
+        .col-input:focus {
+            outline: none;
+            border-color: var(--accent);
+        }
+
+        .col-delete-btn {
+            background: none;
+            border: 1px solid var(--border);
+            color: var(--error);
+            border-radius: 6px;
+            padding: 8px;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.9rem;
+        }
+
+        .col-delete-btn:hover {
+            background: var(--error-dim);
+            border-color: var(--error);
+        }
+
+        .col-manager-footer {
+            padding: 20px 24px;
+            border-top: 1px solid var(--border);
+            display: flex;
+            justify-content: flex-end;
+            gap: 12px;
+        }
+
         /* ── Screen transitions ──────── */
         #pipelineScreen,
         #jsonConverterScreen {
@@ -771,8 +912,13 @@
                 <div class="preview-wrap">
                     <div class="preview-header">
                         <span class="preview-title">merged output <span class="badge purple">final</span></span>
-                        <button class="btn btn-secondary" id="btnEditMergeJson"
-                            style="padding: 4px 10px; font-size: 0.7rem; border-radius: 4px;">Edit JSON</button>
+                        <div>
+                            <button class="btn btn-secondary" id="btnManageColumns"
+                                style="display:none; padding: 4px 10px; font-size: 0.7rem; border-radius: 4px; border-color: var(--accent); color: var(--accent);">Manage
+                                Columns</button>
+                            <button class="btn btn-secondary" id="btnEditMergeJson"
+                                style="padding: 4px 10px; font-size: 0.7rem; border-radius: 4px;">Edit JSON</button>
+                        </div>
                     </div>
                     <pre class="preview" id="mergePreview"></pre>
                     <textarea id="mergeTextarea" class="preview"
@@ -784,6 +930,9 @@
                         JSON</button>
                     <button class="btn btn-green" id="downloadExcelBtn" style="display:none"><span>⬇</span>
                         Excel</button>
+                    <button class="btn btn-primary" id="analyticsBtn"
+                        style="display:none; background: var(--purple); color: #fff; box-shadow: 0 0 20px rgba(167, 139, 250, 0.3);"><span>📈</span>
+                        Analysis</button>
                     <button class="btn btn-secondary" id="copyBtn" style="display:none">copy</button>
                 </div>
             </div>
@@ -815,6 +964,98 @@
                     Excel</button>
             </div>
             <div class="status" id="jsonStatus"></div>
+        </div>
+    </div>
+
+    <!-- ═══ ANALYTICS SCREEN ═══ -->
+    <div id="analyticsScreen" style="display:none; padding-bottom: 80px;">
+        <div class="container" style="max-width: 1000px;">
+            <button class="back-btn" id="btnBackFromAnalytics">&larr; Go Back</button>
+            <div class="header" style="margin-bottom: 24px;">
+                <h2
+                    style="font-size: 2rem; background: linear-gradient(135deg, var(--purple) 0%, #d8b4fe 50%, var(--purple) 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">
+                    Hedonic Regression Analysis</h2>
+                <p style="font-family: 'JetBrains Mono', monospace; font-size: 0.8rem; color: var(--text-muted);">
+                    Data-driven insights into apartment pricing based on floor, size, and location.</p>
+            </div>
+
+            <!-- Single Column Grid for Larger Charts -->
+            <div style="display: grid; grid-template-columns: 1fr; gap: 30px; margin-bottom: 30px;">
+                <!-- Chart 1: Correlation Table -->
+                <div class="preview" style="display: block; padding: 20px;">
+                    <div class="preview-title" style="margin-bottom: 12px; font-family: 'Syne', sans-serif;">1.
+                        Correlation Overview (What affects price the most?)</div>
+                    <div id="correlationContainer"></div>
+                </div>
+
+                <!-- Chart 2: Floor vs Price Sqm -->
+                <div class="preview" style="display: block; padding: 20px; height: 500px;">
+                    <div class="preview-title" style="margin-bottom: 12px; font-family: 'Syne', sans-serif;">2. Floor vs
+                        Price / Sqm (by Size Category)</div>
+                    <canvas id="chartFloorVsPrice"></canvas>
+                </div>
+
+                <!-- Chart 3: Price Variance by Floor -->
+                <div class="preview" style="display: block; padding: 20px; height: 500px;">
+                    <div class="preview-title" style="margin-bottom: 12px; font-family: 'Syne', sans-serif;">3. Price
+                        Variance by Floor</div>
+                    <canvas id="chartPriceVariance"></canvas>
+                </div>
+
+                <!-- Chart 4: Area vs Total Price -->
+                <div class="preview" style="display: block; padding: 20px; height: 500px;">
+                    <div class="preview-title" style="margin-bottom: 12px; font-family: 'Syne', sans-serif;">4. Area
+                        vs Total Price (Bubble size = Floor)</div>
+                    <canvas id="chartAreaVsTotal"></canvas>
+                </div>
+
+                <!-- Chart 5: Price by Location -->
+                <div class="preview" style="display: block; padding: 20px; height: 500px;">
+                    <div class="preview-title" style="margin-bottom: 12px; font-family: 'Syne', sans-serif;">5. Average
+                        Price per Sqm by Location</div>
+                    <canvas id="chartPriceByLocation"></canvas>
+                </div>
+            </div>
+
+            <!-- Regression Summary and Residuals -->
+            <div style="display: grid; grid-template-columns: 1fr; gap: 30px; margin-bottom: 40px;">
+                <div class="preview" style="display: block; padding: 20px;">
+                    <div class="preview-title"
+                        style="margin-bottom: 12px; color: var(--accent); font-family: 'Syne', sans-serif;">Hedonic
+                        Regression Report & Math Analysis</div>
+                    <div id="hedonicReport"></div>
+                </div>
+                <div class="preview" style="display: block; padding: 20px; height: 500px;">
+                    <div class="preview-title" style="margin-bottom: 12px; font-family: 'Syne', sans-serif;">6. Model
+                        Residuals
+                        (Predicted vs Actual Difference)</div>
+                    <canvas id="chartResiduals"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+    </div>
+
+    <!-- ═══ COLUMN MANAGER MODAL ═══ -->
+    <div id="colManagerOverlay" class="col-manager-overlay">
+        <div class="col-manager-modal">
+            <div class="col-manager-header">
+                <div>
+                    <div class="col-manager-title">Manage Columns</div>
+                    <div
+                        style="font-size: 0.75rem; color: var(--text-muted); margin-top: 4px; font-family: 'JetBrains Mono', monospace;">
+                        Rename columns or hide them completely from the final Excel report.</div>
+                </div>
+                <button class="btn btn-secondary" id="btnColManagerClose"
+                    style="padding: 4px 10px; font-size: 0.8rem; border-radius: 4px;">✕</button>
+            </div>
+            <div class="col-manager-body" id="colManagerBody">
+                <!-- Rows injected here -->
+            </div>
+            <div class="col-manager-footer">
+                <button class="btn btn-secondary" id="btnColManagerCancel">Cancel</button>
+                <button class="btn btn-primary" id="btnColManagerSave">Save Changes</button>
+            </div>
         </div>
     </div>
 </body>

@@ -9,7 +9,7 @@ export const HEADER_KEYWORDS = {
         "n", "n."
     ],
 
-    floor: [
+    floor: ["Հարկ",
         "հարկ", "этаж", "этажи", "уровень", "ур.",
         "floor", "fl", "fl.", "storey", "story", "level"
     ],

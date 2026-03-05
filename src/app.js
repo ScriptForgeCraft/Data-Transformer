@@ -2,6 +2,8 @@ import { parseWordFile } from "./parsers/wordParser.js";
 import { parseExcelFile } from "./excel/excelParser.js";
 import { mergeProjectData } from "./services/mergeService.js";
 import { createExcelFromData, jsonToExcel } from "./services/excelExport.js";
+import { initAnalytics, showAnalyticsScreen } from "./analytics/analytics.js";
+import { ColumnManager } from "./components/columnManager.js";
 
 // ── State ────────────────────────────────────────────────────────────────────
 let wordData = null;
@@ -53,9 +55,11 @@ const mergePreview = document.getElementById("mergePreview");
 const mergeStatus = document.getElementById("mergeStatus");
 const downloadJsonBtn = document.getElementById("downloadJsonBtn");
 const downloadExcelBtn = document.getElementById("downloadExcelBtn");
+const analyticsBtn = document.getElementById("analyticsBtn");
 const copyBtn = document.getElementById("copyBtn");
 const mergeWordChip = document.getElementById("mergeWordChip");
 const btnEditMergeJson = document.getElementById("btnEditMergeJson");
+const btnManageColumns = document.getElementById("btnManageColumns");
 const mergeTextarea = document.getElementById("mergeTextarea");
 
 // JSON → Excel
@@ -69,6 +73,7 @@ const downloadFromJsonBtn = document.getElementById("downloadFromJsonBtn");
 
 let currentStep = 1;
 let steps = [];  // will be configured per mode
+let columnManager = null;
 
 // ── Mode Selection ───────────────────────────────────────────────────────────
 function showModeScreen() {
@@ -96,9 +101,11 @@ function showModeScreen() {
     excelFlatCount.textContent = "0";
     downloadJsonBtn.style.display = "none";
     downloadExcelBtn.style.display = "none";
+    if (analyticsBtn) analyticsBtn.style.display = "none";
     copyBtn.style.display = "none";
     btnEditWordJson.style.display = "none";
     btnEditExcelJson.style.display = "none";
+    if (btnManageColumns) btnManageColumns.style.display = "none";
 
     // Reset edit modes
     wordPreview.style.display = "";
@@ -361,7 +368,17 @@ function doMerge() {
 
         downloadJsonBtn.style.display = "inline-flex";
         downloadExcelBtn.style.display = "inline-flex";
+        if (analyticsBtn) analyticsBtn.style.display = "inline-flex";
         copyBtn.style.display = "inline-flex";
+
+        columnManager = new ColumnManager(mergedData, (newData) => {
+            mergedData = newData;
+            renderJSON(mergePreview, mergedData, 80);
+            const aCount = mergedData.length;
+            const headerCount = Object.keys(mergedData[0] || {}).length;
+            setStatus(mergeStatus, `✓ Columns updated! ${headerCount} columns, ${aCount} records.`, "ok");
+        });
+        if (btnManageColumns) btnManageColumns.style.display = "inline-flex";
     } catch (err) {
         console.error(err);
         setStatus(mergeStatus, "\u274c " + err.message, "err");
@@ -472,6 +489,19 @@ downloadJsonBtn.addEventListener("click", downloadJSON);
 downloadExcelBtn.addEventListener("click", downloadExcel);
 copyBtn.addEventListener("click", copyJSON);
 downloadFromJsonBtn.addEventListener("click", downloadExcelFromJson);
+
+if (analyticsBtn) {
+    analyticsBtn.addEventListener("click", () => {
+        showAnalyticsScreen();
+        initAnalytics(mergedData);
+    });
+}
+
+if (btnManageColumns) {
+    btnManageColumns.addEventListener("click", () => {
+        if (columnManager) columnManager.open();
+    });
+}
 
 btnEditMergeJson.addEventListener("click", () => {
     if (mergePreview.style.display !== "none") {

@@ -36,12 +36,17 @@ export function mapHeaderColumns(row, dataRows = []) {
     const colMap = {};
 
     // 1. Match by keywords in header
-    for (let col = 0; col < row.length; col++) {
-        const text = normalizeText(row[col]);
-        if (!text) continue;
-        for (const [key, keywords] of Object.entries(HEADER_KEYWORDS)) {
+    const assignedCols = new Set();
+    // Prioritize explicit unique keywords before ambiguous ones
+    for (const [key, keywords] of Object.entries(HEADER_KEYWORDS)) {
+        for (let col = 0; col < row.length; col++) {
+            if (assignedCols.has(col)) continue;
+            const text = normalizeText(row[col]);
+            if (!text) continue;
             if (keywords.some(kw => kwMatches(text, kw))) {
                 if (!(key in colMap)) colMap[key] = col;
+                assignedCols.add(col);
+                break;
             }
         }
     }
@@ -154,25 +159,53 @@ export function mapHeaderColumns(row, dataRows = []) {
             }
         }
 
-        // Floor: not yet found — small integers
+        // ID: look for sequential integers
+        if (!("id" in colMap)) {
+            let bestCol = -1, maxUniqueRatio = -1;
+            for (let col = 0; col < colCount; col++) {
+                if (Object.values(colMap).includes(col)) continue;
+                const rawVals = dataRows.slice(0, 15).map(r => (r || [])[col]);
+                const numericVals = rawVals.map(parseNumericCell).filter(v => v !== null && v > 0 && v < 10000);
+
+                // IDs usually have high uniqueness mostly
+                if (numericVals.length >= 2) {
+                    const uniqueVals = new Set(numericVals).size;
+                    const ratio = uniqueVals / numericVals.length;
+                    if (ratio > maxUniqueRatio) {
+                        maxUniqueRatio = ratio;
+                        bestCol = col;
+                    }
+                }
+            }
+            if (bestCol >= 0 && maxUniqueRatio > 0.5) colMap.id = bestCol; // Need at least some uniqueness to be an ID
+        }
+
+        // Floor: small integers with low uniqueness
         if (!("floor" in colMap)) {
+            let bestCol = -1, minUniqueRatio = Infinity;
             for (let col = 0; col < colCount; col++) {
                 if (Object.values(colMap).includes(col)) continue;
                 const st = colStats[col];
                 if (!st) continue;
-                // Floor column: small integers (1-50), incrementing, sparse (many nulls OK)
+
                 const rawVals = dataRows.slice(0, 20).map(r => (r || [])[col]);
                 const nonNullCount = rawVals.filter(v => v !== null && v !== "").length;
                 if (nonNullCount < 2) continue; // too sparse to judge
+
                 if (st.allInts && st.vals.every(v => looksLikeFloor(v)) && st.avg < 100) {
-                    // Not a room count (rooms usually much less distinct)
-                    colMap.floor = col;
-                    break;
+                    const uniqueVals = new Set(st.vals).size;
+                    const ratio = uniqueVals / st.vals.length;
+
+                    if (ratio < minUniqueRatio) {
+                        minUniqueRatio = ratio;
+                        bestCol = col;
+                    }
                 }
             }
+            if (bestCol >= 0 && minUniqueRatio < 0.8) colMap.floor = bestCol; // Floors should repeat occasionally
         }
 
-        // Rooms: not yet found — small integers, different from floor
+        // Rooms: small integers, different from floor
         if (!("rooms" in colMap)) {
             for (let col = 0; col < colCount; col++) {
                 if (Object.values(colMap).includes(col)) continue;
@@ -181,23 +214,6 @@ export function mapHeaderColumns(row, dataRows = []) {
                 const uniqueVals = new Set(st.vals);
                 if (st.allInts && st.vals.every(v => looksLikeRooms(v)) && uniqueVals.size <= 8) {
                     colMap.rooms = col;
-                    break;
-                }
-            }
-        }
-
-        // ID: not yet found — look for sequential integers or strings with digits
-        if (!("id" in colMap)) {
-            for (let col = 0; col < colCount; col++) {
-                if (Object.values(colMap).includes(col)) continue;
-                const rawVals = dataRows.slice(0, 10).map(r => (r || [])[col]);
-                const withDigits = rawVals.filter(v => v !== null && /\d/.test(String(v)));
-                // IDs: mostly sequential numbers, not huge (< price threshold)
-                const numericVals = rawVals.map(parseNumericCell).filter(v => v !== null);
-                if (numericVals.length >= 3 &&
-                    numericVals.every(v => v > 0 && v < 10000) &&
-                    !Object.values(colMap).includes(col)) {
-                    colMap.id = col;
                     break;
                 }
             }
