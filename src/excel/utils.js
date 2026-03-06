@@ -20,7 +20,8 @@ export function kwMatches(text, kw) {
     const textNorm = normalizeText(text);
     if (textNorm === kwNorm) return true;
 
-    if (kwNorm.length <= 3) {
+    // Use word boundaries for words up to 5 characters (e.g. 'հարկ', 'этаж', 'room', 'բնակ')
+    if (kwNorm.length <= 5) {
         const escaped = kwNorm.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
         const regex = new RegExp(`(^|[\\s/\\\\:\\-.,])${escaped}([\\s/\\\\:\\-.,]|$)`, 'iu');
         return regex.test(textNorm);
