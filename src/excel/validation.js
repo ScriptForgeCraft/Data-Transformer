@@ -1,31 +1,36 @@
 import { AREA_MIN, AREA_MAX } from "./constants.js";
 import { looksLikePrice, classifyPrice } from "./utils.js";
 
-// ── Пост-валидация: перекрёстная проверка всех полей ─────────────────────────
-// ПРИНЦИП: если значение уже 100% привязано к полю, оно не может
-//          повторно использоваться для другого поля.
+/**
+ * Performs final cross-validation of all extracted fields for a given flat.
+ * PRINCIPLE: If a value is 100% confidently bound to one field, it cannot 
+ * be simultaneously reused for another field. Corrects drifting IDs, Areas, and Prices.
+ * 
+ * @param {Object} flat - The unstructured flat object extracted from the row
+ * @returns {Object} A strictly validated flat object
+ */
 export function postValidateFlat(flat) {
     let { id, area, area_orig, price, price_sqm, rooms, currency } = flat;
 
-    // Множество «занятых» значений (чтобы одно значение не попало в два поля)
+    // Set of "claimed" values to prevent a single value from fulfilling two different fields
     const claimedValues = new Set();
 
-    // Помечаем значения, которые уже надёжно определены
+    // Mark explicitly mapped fields as claimed
     if (id !== null) claimedValues.add(String(id));
 
-    // ── Хелперы ───────────────────────────────────────────────────────────────
+    // ── Helpers ───────────────────────────────────────────────────────────────
     const looksLikeId = (v) => v !== null && Number.isInteger(v) && v >= 1 && v <= 9999;
     const isDecimal = (v) => v !== null && !Number.isInteger(v);
     const isClaimed = (v) => v !== null && claimedValues.has(String(v));
 
-    // ── 1. Если id == null — пробуем спасти из других полей ──────────────────
+    // ── 1. Recovery Mechanism: If ID is missing, attempt to salvage from other fields ──
     if (id === null) {
-        // Случай A: area выглядит как ID (целое число < 500)
+        // Case A: Mapped Area looks suspiciously like an ID (small integer < 500)
         if (area !== null && looksLikeId(area) && Number.isInteger(area) && area < 500) {
             if (price !== null && price_sqm !== null) {
                 const calculatedArea = price / price_sqm;
                 if (calculatedArea >= AREA_MIN && calculatedArea <= AREA_MAX && calculatedArea !== area) {
-                    // area на самом деле — ID, вычисляем настоящую площадь
+                    // The mapped 'area' is actually the ID; compute real area from price formulas
                     id = String(area);
                     claimedValues.add(id);
                     area = Math.round(calculatedArea * 10) / 10;
@@ -40,7 +45,7 @@ export function postValidateFlat(flat) {
             }
         }
 
-        // Случай B: price выглядит как ID
+        // Case B: Mapped Price looks suspiciously like an ID and not like a price
         if (id === null && price !== null && looksLikeId(price) && price < 500 && !looksLikePrice(price)) {
             id = String(price);
             claimedValues.add(id);
@@ -48,15 +53,15 @@ export function postValidateFlat(flat) {
         }
     }
 
-    // ── 2. Если id — десятичное число в диапазоне площади — вероятно, это площадь ──
+    // ── 2. Decimals found in ID bounds range are likely misplaced Area ──
     if (id !== null) {
         const idNum = parseFloat(id);
         if (!isNaN(idNum) && isDecimal(idNum) && idNum >= AREA_MIN && idNum <= AREA_MAX) {
             if (area !== null && looksLikeId(area)) {
-                // Меняем местами
+                // Swap ID and Area
                 const realId = String(area);
                 const realArea = idNum;
-                // Убеждаемся, что realId не было уже занято другим полем
+                // Verify realId hasn't been claimed by something else
                 if (!isClaimed(realId) || realId === id) {
                     id = realId;
                     claimedValues.add(id);
@@ -67,23 +72,22 @@ export function postValidateFlat(flat) {
         }
     }
 
-    // ── 3. Проверка: если area совпадает со значением id — убираем дубль ─────
-    // (Это главная проблема, о которой говорил пользователь)
+    // ── 3. Deduplication Check: Area and ID cannot identical ─────────────────
     if (id !== null && area !== null) {
         const areaStr = String(area);
         if (claimedValues.has(areaStr) && areaStr === String(id)) {
-            // area имеет то же значение что и id — это дубль, обнуляем area
+            // Priority given to ID. Clear false Area duplicate.
             area = null;
             area_orig = null;
         }
     }
 
-    // ── 4. Проверка: price_sqm не может быть крошечным числом ────────────────
+    // ── 4. Verify that Price Per Sqm is realistically dimensioned ────────────────
     if (price_sqm !== null && price_sqm <= 10) {
         price_sqm = null;
     }
 
-    // ── 5. Слишком маленькая «цена» — это не цена ────────────────────────────
+    // ── 5. Unrealistic small total prices are purged or reassigned to ID ───
     if (price !== null && classifyPrice(price, currency) === null && !looksLikePrice(price)) {
         if (id === null && Number.isInteger(price) && price < 500 && !isClaimed(String(price))) {
             id = String(price);
@@ -92,7 +96,7 @@ export function postValidateFlat(flat) {
         price = null;
     }
 
-    // ── 6. Слишком большая «площадь» — вероятно, это цена ───────────────────
+    // ── 6. Exorbitant Area values are actually Total Price ───────────────────
     if (area !== null && area > AREA_MAX && (classifyPrice(area, currency) !== null || looksLikePrice(area))) {
         if (price === null) {
             price = area;
@@ -101,12 +105,12 @@ export function postValidateFlat(flat) {
         area_orig = null;
     }
 
-    // ── 7. Проверка: price_sqm не должен совпадать со значением id ───────────
+    // ── 7. Price Per Sqm cannot be identical to ID ───────────────────────────
     if (id !== null && price_sqm !== null && claimedValues.has(String(price_sqm))) {
         price_sqm = null;
     }
 
-    // ── 8. Пересчёт перекрёстных значений после всех корректировок ───────────
+    // ── 8. Final Recalculation pass after corrections ───────────────────────────
     if (area && area > 0) {
         if (price !== null && price_sqm === null) {
             price_sqm = Math.round(price / area);
@@ -118,11 +122,16 @@ export function postValidateFlat(flat) {
     return { ...flat, id, area, area_orig, price, price_sqm, rooms, currency };
 }
 
-// ── Слияние спаренных строк ───────────────────────────────────────────────────
-// Некоторые матричные лейауты создают две строки на квартиру:
-//   Строка A: id + area, без цены
-//   Строка B: цена, без id и area
-// Объединяем их в одну запись.
+/**
+ * Merges staggered dual-row logic where a single flat spans two Excel rows.
+ * e.g.,
+ *   Row A: ID + Area
+ *   Row B: Total Price / Price Per Sqm
+ * Combines A→B or B→A paired layouts into a single output object.
+ * 
+ * @param {Array<Object>} flats - Sequence of raw parsed flat objects
+ * @returns {Array<Object>} Sequence of logically merged flat objects
+ */
 export function mergeAdjacentFlats(flats) {
     const merged = [];
     let i = 0;
@@ -133,7 +142,7 @@ export function mergeAdjacentFlats(flats) {
 
         if (next &&
             current.sheet === next.sheet &&
-            current.floor === next.floor) {
+            (current.floor === next.floor || next.floor === null || current.floor === null)) {
 
             const curHasId = current.id !== null && !/^\d{3},\d{3}$/.test(current.id);
             const curHasArea = current.area !== null && current.area > 0;
@@ -143,7 +152,7 @@ export function mergeAdjacentFlats(flats) {
             const nextHasPrice = next.price !== null || next.price_sqm !== null;
             const nextNoArea = next.area === null;
 
-            // Паттерн A→B: id+area/нет цены + нет id+area/цена
+            // Pattern A→B: Row A contains ID+Area; Row B contains Price
             if (curHasId && curHasArea && curNoPrice && nextHasPrice && nextNoArea) {
                 const mergedFlat = {
                     ...current,
@@ -167,7 +176,7 @@ export function mergeAdjacentFlats(flats) {
                 continue;
             }
 
-            // Паттерн B→A (обратный)
+            // Pattern B→A (Reversed sequence)
             if (next.id !== null && next.area !== null && next.area > 0 &&
                 next.price === null && next.price_sqm === null &&
                 !curHasId && (current.price !== null || current.price_sqm !== null)) {

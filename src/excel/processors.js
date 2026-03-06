@@ -13,11 +13,26 @@ import { determineColumnMappingAsync } from "./layout.js";
 import { postValidateFlat } from "./validation.js";
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// ОБЩАЯ ФУНКЦИЯ: извлечение данных из одной строки по схеме колонок
-// Используется в обоих processors, чтобы не дублировать код (~100 строк)
+// SHARED EXTRACTOR: Extracts data from a single row according to column layout
+// Used by both header and headerless processors to avoid code duplication
 // ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Parses a single Excel row array into a structured Flat object based on the mapped headers.
+ * Implements complex heuristics to calculate missing fields (like total price from sqm)
+ * and safely locate drifting IDs/prices from unassigned columns.
+ * 
+ * @param {Array} row - Raw row data
+ * @param {Object} headers - Mapped column indices (e.g., { id: 0, area: 1, price_total: 2 })
+ * @param {string} buildingName - Identified building name for the block
+ * @param {string} sheetName - Source sheet name
+ * @param {number|string|null} lastFloor - Extracted floor from this or recent rows
+ * @param {number} startCol - Start boundary for column iteration
+ * @param {number} endCol - End boundary for column iteration
+ * @returns {Object} Structured extracting data for a single flat
+ */
 function extractFlatFromRow(row, headers, buildingName, sheetName, lastFloor, startCol = 0, endCol = row.length - 1) {
-    // ── Площадь ─────────────────────────────────────────────────────────────
+    // ── Area ────────────────────────────────────────────────────────────────
     let area = null;
     if (headers.new_area !== undefined && row[headers.new_area] != null) {
         area = parseNumericCell(row[headers.new_area]);
@@ -31,7 +46,7 @@ function extractFlatFromRow(row, headers, buildingName, sheetName, lastFloor, st
         ? parseNumericCell(row[headers.area])
         : null;
 
-    // ── Цена ────────────────────────────────────────────────────────────────
+    // ── Price ───────────────────────────────────────────────────────────────
     let price = null;
     let currency = null;
 
@@ -58,30 +73,30 @@ function extractFlatFromRow(row, headers, buildingName, sheetName, lastFloor, st
         currency = detectCurrency(String(cellVal || ""));
     }
 
-    // Fallback: анализ незанятых ячеек
+    // Fallback: Analyze unused cells for orphaned price values
     const fb = extractFallbackValues(row, Object.values(headers), area, price, price_sqm, currency, startCol, endCol);
     price = fb.price;
     price_sqm = fb.price_sqm;
     if (fb.currency && !currency) currency = fb.currency;
 
-    // ── ID ─────────────────────────────────────────────────────────────────────
+    // ── ID ──────────────────────────────────────────────────────────────────
     const idRaw = headers.id !== undefined ? String(row[headers.id] ?? "").trim() : "";
-    // Числа с точкой — вероятно, площадь, а не ID (например 47.5 или 101.2)
+    // Numbers with dots are probably areas, not IDs (e.g. 47.5 or 101.2)
     const idIsFloat = /^\d+[.\u0589\u2024\u00b7]\d+$/.test(idRaw);
     let id = idRaw && /\d/.test(idRaw) && !idIsFloat ? idRaw : null;
 
-    // Если ID не найден в известной колонке — ищем в остальных ячейках ПОСЛЕ извлечения цены и площади
+    // If ID is not found in the mapped column — search remaining cells AFTER extracting price and area
     if (!id) {
         const skipCols = new Set(Object.values(headers));
         for (let c = startCol; c <= Math.min(endCol, row.length - 1); c++) {
             if (skipCols.has(c)) continue;
             const cellValRaw = row[c];
             const cell = String(cellValRaw || "").trim();
-            const num = parseNumericCell(cellValRaw); // Parse the raw value to avoid string conversion issues during check
+            const num = parseNumericCell(cellValRaw);
             const cellIsFloat = /^\d+[.\u0589\u2024\u00b7]\d+$/.test(cell);
             const isFloorText = /^\d+\s*[-‐֊]?(ին|րդ|th|st|nd|rd|ый|ой|ий|ая|яя|ье)$/i.test(cell) || /հարկ|этаж|floor/i.test(cell);
 
-            // Если это значение уже распознано как цена или площадь, пропускаем его
+            // If this value is already consumed by price or area, skip it
             if (num !== null && (num === area || num === price || num === price_sqm)) continue;
 
             if (
@@ -98,7 +113,7 @@ function extractFlatFromRow(row, headers, buildingName, sheetName, lastFloor, st
         }
     }
 
-    // ── Комнаты / Статус ────────────────────────────────────────────────────
+    // ── Rooms / Status ──────────────────────────────────────────────────────
     const rooms = headers.rooms !== undefined
         ? parseNumericCell(row[headers.rooms])
         : null;
@@ -106,18 +121,18 @@ function extractFlatFromRow(row, headers, buildingName, sheetName, lastFloor, st
         ? normalizeText(row[headers.status])
         : null;
 
-    // ── Взаимный расчёт цены ────────────────────────────────────────────────
+    // ── Mutual Price Calculation ────────────────────────────────────────────
     if (area && area > 0) {
         if (price !== null && price_sqm === null) {
             price_sqm = Math.round(price / area);
         } else if (price_sqm !== null && price === null) {
             price = Math.round(price_sqm * area);
         } else if (price !== null && price_sqm !== null) {
-            // Проверяем согласованность (допуск 5%)
+            // Check consistency (5% tolerance) between total price and sqm price
             const expectedSqm = price / area;
             const errorMargin = Math.abs(expectedSqm - price_sqm) / price_sqm;
             if (errorMargin > 0.05) {
-                price_sqm = Math.round(price / area);
+                price_sqm = Math.round(price / area); // Override anomalous sqm mappings
             }
         }
     }
@@ -126,7 +141,7 @@ function extractFlatFromRow(row, headers, buildingName, sheetName, lastFloor, st
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// Обработка листа: есть строка заголовков
+// Sheet Processor: Block with Header Row Found
 // ═══════════════════════════════════════════════════════════════════════════════
 export function processHeaderBlock(data, blockInfo, fallbackBuildingName, sheetName, allFlats) {
     const { rowIndex, headers, startCol, endCol } = blockInfo;
@@ -153,7 +168,7 @@ export function processHeaderBlock(data, blockInfo, fallbackBuildingName, sheetN
         const row = data[i];
         if (!row || row.every(cell => cell === null || cell === "")) continue;
 
-        // Обновляем текущий этаж, если найдено число в колонке floor
+        // Update the current floor if a number is found in the floor column
         if (headers.floor !== undefined) {
             const floorCell = row[headers.floor];
             if (floorCell !== null && floorCell !== undefined && floorCell !== "") {
@@ -175,6 +190,8 @@ export function processHeaderBlock(data, blockInfo, fallbackBuildingName, sheetN
             rooms: extracted.rooms,
             price: extracted.price,
             price_sqm: extracted.price_sqm,
+            price_sqm_sale: extracted.price_sqm_sale ?? null,
+            price_total_sale: extracted.price_total_sale ?? null,
             area: extracted.area,
             area_orig: extracted.area_orig,
             status: extracted.status,
@@ -188,10 +205,10 @@ export function processHeaderBlock(data, blockInfo, fallbackBuildingName, sheetN
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// Обработка листа: нет заголовков (AI + эвристика)
+// Sheet Processor: AI + Heuristics for Headerless Sheets
 // ═══════════════════════════════════════════════════════════════════════════════
 export function processNoHeaderSheet(data, buildingName, sheetName, allFlats) {
-    // Находим строку с данными (минимум 3 непустых ячейки)
+    // Find the first row containing actual data (at least 3 non-empty cells)
     let dataStart = 0;
     for (let i = 0; i < Math.min(5, data.length); i++) {
         const row = data[i];
@@ -208,7 +225,7 @@ export function processNoHeaderSheet(data, buildingName, sheetName, allFlats) {
 
     const colCount = Math.max(...sampleRows.map(r => r.length));
 
-    // Определяем маппинг через AI + эвристику (пустые заголовки = нет заголовков)
+    // Determine mapping via AI + heuristics (empty headers array indicates no headers)
     const headers = determineColumnMappingAsync(new Array(colCount).fill(""), sampleRows);
     if (Object.keys(headers).length < 2) return;
 
@@ -218,6 +235,7 @@ export function processNoHeaderSheet(data, buildingName, sheetName, allFlats) {
         const row = data[i];
         if (!row || row.every(cell => cell === null || cell === "")) continue;
 
+        // Track floating floor numbers
         if (headers.floor !== undefined) {
             const floorCell = row[headers.floor];
             if (floorCell !== null && floorCell !== undefined && floorCell !== "") {
@@ -237,6 +255,8 @@ export function processNoHeaderSheet(data, buildingName, sheetName, allFlats) {
             rooms: extracted.rooms,
             price: extracted.price,
             price_sqm: extracted.price_sqm,
+            price_sqm_sale: extracted.price_sqm_sale ?? null,
+            price_total_sale: extracted.price_total_sale ?? null,
             area: extracted.area,
             area_orig: extracted.area_orig,
             status: extracted.status,

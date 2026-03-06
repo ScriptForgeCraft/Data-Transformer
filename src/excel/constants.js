@@ -14,9 +14,9 @@ export const HEADER_KEYWORDS = {
         "floor", "fl", "fl.", "storey", "story", "level"
     ],
 
-    area: [
+    area: ["Բնակարանի մակերես",
         "քմ", "մ²", "մ2", "մ 2",
-        "մակերես", "площадь", "пл", "пл.",
+        "մակերես", "մակերեսը", "հողատարածք", "հողատարածքի չափ", "площадь", "пл", "пл.",
         "area", "size", "sq.m", "sqm", "m²", "m2",
         "square meter", "square meters",
         "кв.м", "кв. м"
@@ -35,16 +35,31 @@ export const HEADER_KEYWORDS = {
     ],
 
     price_sqm: [
-        "արժեք", "1 քմ", "1քմ", "price per", "cost per",
+        "1 քմ", "1քմ", "1 քմ-ի արժեք", "price per", "cost per",
         "цена за м", "стоимость за м",
-        "դրամ/քմ", "$/քմ"
+        "դրամ/քմ", "$/քմ", "1քմ արժեք", "1քմ արժեքը", "1քմ արժեքը զեղչ"
     ],
 
     price_total: [
         "ընդհանուր", "ընդհանուր գին",
         "общая цена", "итоговая цена",
         "total", "total price", "full price", "overall price",
-        "ընդհանուր գինը", "ընդհանուր արժեք"
+        "ընդհանուր գինը", "ընդհանուր արժեք", "ընդ. արժեք", "ընդ. արժեք նոր"
+    ],
+
+    price_ambiguous: [
+        "գին", "գինը", "արժեք", "արժեքը", "price", "cost", "цена", "стоимость"
+    ],
+
+    price_sqm_sale: [
+        "zeghchvats 1qm", "1qm zeghchvats", "1 qm zeghchvats",
+        "discounted sqm", "sale sqm", "со скидкой за м"
+    ],
+
+    price_total_sale: [
+        "zeghchvats endhanur", "endhanur zeghchvats",
+        "discounted total", "sale price", "final price",
+        "со скидкой итого"
     ],
 
     status: [

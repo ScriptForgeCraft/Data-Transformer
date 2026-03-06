@@ -23,48 +23,37 @@ export function kwMatches(text, kw) {
     // Use word boundaries for words up to 5 characters (e.g. 'հարկ', 'этаж', 'room', 'բնակ')
     if (kwNorm.length <= 5) {
         const escaped = kwNorm.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        const regex = new RegExp(`(^|[\\s/\\\\:\\-.,])${escaped}([\\s/\\\\:\\-.,]|$)`, 'iu');
+        const regex = new RegExp(`(^|[\\s/\\\\:\\-.,\\d\\(])${escaped}([\\s/\\\\:\\-.,\\)ընիաեуяք]|$)`, 'iu');
         return regex.test(textNorm);
     }
 
     return textNorm.includes(kwNorm);
 }
 
-export function textToNumber(text) {
-    if (!text || typeof text !== "string") return 1;
 
-    let multiplier = 1;
-    const lower = text.toLowerCase();
-
-    // Millions 
-    if (lower.includes("միլիոն") || lower.includes("մլն") ||
-        lower.includes("миллион") || lower.includes("млн") ||
-        lower.includes("million") || lower.includes("mil") || lower.includes("m")) {
-        multiplier = 1_000_000;
-    }
-    // Thousands
-    else if (lower.includes("հազար") || lower.includes("հազ") ||
-        lower.includes("тысяч") || lower.includes("тыс") ||
-        lower.includes("thousand") || lower.includes("k")) {
-        multiplier = 1_000;
-    }
-
-    return multiplier;
-}
-
+/**
+ * Parses a cell value into a clean numeric format.
+ * Automatically handles string-based numbers containing textual multipliers 
+ * (e.g. "1.5 million", "200k", "50 тыс").
+ * 
+ * @param {string|number} raw - The raw cell value to parse
+ * @returns {number|null} The parsed numeric value, or null if invalid
+ */
 export function parseNumericCell(raw) {
     if (typeof raw === "number") return raw;
     if (typeof raw === "string") {
         const lower = raw.toLowerCase().trim();
         if (!lower) return null;
 
-        // Reject things that are clearly dates, phone numbers, or complex IDs
-        if ((raw.match(/[-/\\]/g) || []).length >= 2) return null; // IDs like A-15-1 or dates 2024/02/01
-        if (/\d{2}\.\d{2}\.\d{4}/.test(raw)) return null; // 15.10.2023
-        if (/[a-zа-яա-ֆ]/i.test(raw) && (raw.match(/\d/g) || []).length >= 8) return null; // Random hash/ID containing letters
+        // Reject values that resemble dates, phone numbers, or complex string IDs (e.g., A-15-1 or 2024/02/01)
+        if ((raw.match(/[-/\\]/g) || []).length >= 2) return null;
+        if (/\d{2}\.\d{2}\.\d{4}/.test(raw)) return null;
+
+        // Reject random hash/ID values containing a mix of letters and many digits
+        if (/[a-zа-яա-ֆ]/i.test(raw) && (raw.match(/\d/g) || []).length >= 8) return null;
 
         const digitCount = (raw.match(/\d/g) || []).length;
-        if (digitCount >= 11) return null; // Prices >= 100 billion are virtually impossible, this is a phone/account number
+        if (digitCount >= 11) return null; // Prices >= 100 billion are virtually impossible, this is likely a phone/account number
 
         // Check if string contains textual multipliers
         const hasMillions = /միլիոն|մլն|миллион|млн|million|mil|\bm\b/.test(lower);
@@ -149,6 +138,14 @@ export function detectCurrency(str) {
     return null;
 }
 
+/**
+ * Heuristically classifies whether a numeric value represents a Total Price or a Price per Sqm
+ * based on the currency and the magnitude of the number.
+ * 
+ * @param {number} val - The price numeric value
+ * @param {string} currency - The detected currency symbol (e.g. `$`, `֏`, `₽`)
+ * @returns {"total"|"sqm"|null} The classification, or null if ambiguous/invalid
+ */
 export function classifyPrice(val, currency) {
     if (val === null || val < 100) return null; // Too small to be a realistic price/sqm
 
@@ -163,7 +160,7 @@ export function classifyPrice(val, currency) {
         if (val >= 4000000) return "total";
         return "sqm";
     } else {
-        // Unknown currency
+        // Unknown currency fallback behavior
         if (val >= 4000000) return "total"; // Clearly AMD total price 
         if (val >= 100000) return "sqm"; // AMD price_sqm or large USD total. Usually in AMD, this is price per sqm.
         if (val >= 8000) return "total"; // Small USD total
@@ -194,6 +191,20 @@ export function findAreaInRow(row, excludeCols = [], startCol = 0, endCol = row.
     return null;
 }
 
+/**
+ * Sweeps through a row's unassigned columns to find stranded price or area values.
+ * Used when explicit column mapping leaves critical fields empty but data exists.
+ * 
+ * @param {Array} row - The row data array
+ * @param {Array<number>} skipCols - Columns already mapped to specific fields
+ * @param {number|null} area - Already identified area
+ * @param {number|null} currentPrice - Already identified total price
+ * @param {number|null} currentPriceSqm - Already identified price per sqm
+ * @param {string|null} currentCurrency - Already identified currency
+ * @param {number} startCol - Start column index
+ * @param {number} endCol - End column index
+ * @returns {Object} An object containing the patched {price, price_sqm, currency}
+ */
 export function extractFallbackValues(row, skipColsRaw, area, currentPrice, currentPriceSqm, currentCurrency, startCol = 0, endCol = row.length - 1) {
     const skipCols = new Set(skipColsRaw);
     let price = currentPrice;

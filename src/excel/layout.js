@@ -9,7 +9,8 @@ import {
     looksLikeFloor,
     looksLikeRooms,
     hasCurrencySymbol,
-    hasAreaSymbol
+    hasAreaSymbol,
+    classifyPrice
 } from "./utils.js";
 
 export function detectHeaderRow(data) {
@@ -39,14 +40,37 @@ export function detectHeaderRow(data) {
     return maxMatches >= 2 ? bestRow : null;
 }
 
-// Our 100% reliable heuristic fallback
+/**
+ * Heuristic Classification Engine.
+ * Analyzes a row of header strings and optionally the underlying data rows.
+ * Maps identified columns to standard database fields (id, area, price_total, etc).
+ * Uses keyword matching first, then falls back to robust statistical analysis of numeric data.
+ * 
+ * @param {Array<string>} row - The header row to analyze
+ * @param {Array<Array>} [dataRows=[]] - Sample data rows to analyze if headers are ambiguous/missing
+ * @returns {Object} Column mapping, e.g., { id: 0, area: 2, price_total: 4 }
+ */
 export function mapHeaderColumns(row, dataRows = []) {
     const colMap = {};
 
     // 1. Match by keywords in header
     const assignedCols = new Set();
+    const ambiguousPriceCols = [];
+
     // Prioritize explicit unique keywords before ambiguous ones
     for (const [key, keywords] of Object.entries(HEADER_KEYWORDS)) {
+        if (key === "price_ambiguous") {
+            for (let col = 0; col < row.length; col++) {
+                if (assignedCols.has(col)) continue;
+                const text = normalizeText(row[col]);
+                if (!text) continue;
+                if (keywords.some(kw => kwMatches(text, kw))) {
+                    ambiguousPriceCols.push(col);
+                }
+            }
+            continue;
+        }
+
         for (let col = 0; col < row.length; col++) {
             if (assignedCols.has(col)) continue;
             const text = normalizeText(row[col]);
@@ -95,6 +119,25 @@ export function mapHeaderColumns(row, dataRows = []) {
             const allInts = vals.every(v => Number.isInteger(v));
             const maxVal = Math.max(...vals);
             colStats.push({ avg, allInts, maxVal, vals });
+        }
+
+        // Evaluate ambiguous price columns based on their actual data
+        for (const col of ambiguousPriceCols) {
+            const st = colStats[col];
+            if (!st) continue;
+
+            // Try to classify based on average
+            const mockClassification = classifyPrice(st.avg, "AMD") || classifyPrice(st.avg, "USD");
+
+            if (mockClassification === "total" || looksLikeSafePrice(st.avg)) {
+                if (!("price_total" in colMap)) {
+                    colMap.price_total = col;
+                }
+            } else if (mockClassification === "sqm" || st.avg >= 250) {
+                if (!("price_sqm" in colMap)) {
+                    colMap.price_sqm = col;
+                }
+            }
         }
 
         // Price: not yet found — look for large numbers
@@ -240,6 +283,14 @@ export function determineColumnMappingAsync(headers, dataRows) {
     return heuristicMap;
 }
 
+/**
+ * Detects the presence of header rows and partitions the sheet into discrete logical table blocks.
+ * It identifies visual gaps (empty columns) between separate tables (e.g., side-by-side matrices) and
+ * validates whether these partitions are structurally independent or just visual padding.
+ * 
+ * @param {Array<Array>} data - The full sheet data
+ * @returns {Array<Object>|null} An array of table blocks with localized headers, or null if no headers
+ */
 export function hasHeaderRow(data) {
     const rowIndex = detectHeaderRow(data);
     if (rowIndex === null) return null;
@@ -261,7 +312,7 @@ export function hasHeaderRow(data) {
         const isEmpty = c === combinedRow.length || !combinedRow[c];
         if (isEmpty) {
             gap++;
-            if (gap >= 1) { // We use gap >= 1 to catch side-by-side tables separated by only 1 empty column
+            if (gap >= 1) {
                 const lastValidCol = c - gap;
                 if (lastValidCol >= start) {
                     const slice = combinedRow.slice(start, lastValidCol + 1);
@@ -282,33 +333,90 @@ export function hasHeaderRow(data) {
         }
     }
 
-    if (tableBlocks.length === 0) {
-        const dataRows = data.slice(rowIndex + 1, rowIndex + 10);
-        const headers = determineColumnMappingAsync(combinedRow, dataRows);
-        return Object.keys(headers).length >= 2
-            ? [{ rowIndex, headers, startCol: 0, endCol: combinedRow.length - 1 }]
-            : null;
-    }
+    // ── Table Partition Validation ────────────────────────────────────────────────
+    // The previous pass extracted potential blocks based on empty column gaps.
+    // However, some Excel files use empty columns strictly for visual padding inside 
+    // a single unified table (e.g., aldina.xlsx). 
+    // If a detected "block" lacks the necessary constituent fields to be an independent 
+    // table (like ID/Area or ID/Price), it must be a fragment of a larger table.
+    // We iteratively merge these weak fragments with adjacent fragments.
 
-    const result = [];
-    for (const block of tableBlocks) {
+    const blocksWithMapping = tableBlocks.map(block => {
         const sliceStr = combinedRow.slice(block.startCol, block.endCol + 1);
         const dataRows = data.slice(rowIndex + 1, rowIndex + 10).map(r =>
             r ? r.slice(block.startCol, block.endCol + 1) : []
         );
         const headers = determineColumnMappingAsync(sliceStr, dataRows);
+        return { block, headers };
+    });
 
-        const absHeaders = {};
-        for (const [key, relCol] of Object.entries(headers)) {
-            absHeaders[key] = relCol + block.startCol;
-        }
+    /**
+     * Determines if a block has enough critical mapped columns to stand on its own as a table.
+     */
+    const isStrongBlock = (headers) => {
+        const hasId = "id" in headers;
+        const hasArea = "area" in headers || "new_area" in headers;
+        const hasPrice = "price_total" in headers || "price_sqm" in headers;
+        return (hasId && hasArea) || (hasId && hasPrice) || (hasArea && hasPrice);
+    };
 
-        if (Object.keys(absHeaders).length >= 2) {
-            result.push({ rowIndex, headers: absHeaders, startCol: block.startCol, endCol: block.endCol });
+    // Merge adjacent weak blocks iteratively
+    const consolidatedBlocks = [];
+    let currentConsolidated = null;
+
+    for (let i = 0; i < blocksWithMapping.length; i++) {
+        const info = blocksWithMapping[i];
+
+        if (!currentConsolidated) {
+            currentConsolidated = info;
+        } else {
+            // Should we merge currentConsolidated and info?
+            if (!isStrongBlock(currentConsolidated.headers) || !isStrongBlock(info.headers)) {
+                // Merge them into a single larger block bridging the gap
+                const newStart = currentConsolidated.block.startCol;
+                const newEnd = info.block.endCol;
+                const sliceStr = combinedRow.slice(newStart, newEnd + 1);
+                const dataRows = data.slice(rowIndex + 1, rowIndex + 10).map(r =>
+                    r ? r.slice(newStart, newEnd + 1) : []
+                );
+                const mergedHeaders = determineColumnMappingAsync(sliceStr, dataRows);
+
+                currentConsolidated = {
+                    block: { startCol: newStart, endCol: newEnd },
+                    headers: mergedHeaders
+                };
+            } else {
+                consolidatedBlocks.push(currentConsolidated);
+                currentConsolidated = info;
+            }
         }
     }
 
-    return result.length > 0 ? result : null;
+    if (currentConsolidated) consolidatedBlocks.push(currentConsolidated);
+
+    // Filter to only return actual valid blocks
+    const finalResult = [];
+    for (const info of consolidatedBlocks) {
+        if (Object.keys(info.headers).length >= 2) {
+            const absHeaders = {};
+            for (const [key, relCol] of Object.entries(info.headers)) {
+                absHeaders[key] = relCol + info.block.startCol;
+            }
+            finalResult.push({ rowIndex, headers: absHeaders, startCol: info.block.startCol, endCol: info.block.endCol });
+        }
+    }
+
+    // Fallback: if somehow everything failed, try to just treat the whole row as 1 table
+    if (finalResult.length === 0) {
+        const dataRows = data.slice(rowIndex + 1, rowIndex + 10);
+        const allHeaders = determineColumnMappingAsync(combinedRow, dataRows);
+        if (Object.keys(allHeaders).length >= 2) {
+            return [{ rowIndex, headers: allHeaders, startCol: 0, endCol: combinedRow.length - 1 }];
+        }
+        return null;
+    }
+
+    return finalResult;
 }
 
 export function isAlternatingLayout(data) {
@@ -323,7 +431,7 @@ export function isAlternatingLayout(data) {
             const area = parseNumericCell(row1[col + 1]);
             const price = parseNumericCell(row2[col + 1]);
             // Price row can contain price_sqm (100K-5M) OR total prices (>1M)
-            const priceOk = price && (price >= 100000 || looksLikePrice(price));
+            const priceOk = price === null || (price >= 100000 || looksLikePrice(price));
             if (area && looksLikeArea(area) && priceOk) validPairs++;
         }
         if (validPairs >= 1) return i - 1 < 0 ? 0 : i - 1;
