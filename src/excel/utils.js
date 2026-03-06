@@ -163,7 +163,7 @@ export function classifyPrice(val, currency) {
         return "sqm";
     } else {
         // Unknown currency
-        if (val >= 4000000) return "total"; // Clearly AMD total price
+        if (val >= 4000000) return "total"; // Clearly AMD total price 
         if (val >= 100000) return "sqm"; // AMD price_sqm or large USD total. Usually in AMD, this is price per sqm.
         if (val >= 8000) return "total"; // Small USD total
         return "sqm"; // USD sqm
