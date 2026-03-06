@@ -16,34 +16,7 @@ import { postValidateFlat } from "./validation.js";
 // ОБЩАЯ ФУНКЦИЯ: извлечение данных из одной строки по схеме колонок
 // Используется в обоих processors, чтобы не дублировать код (~100 строк)
 // ═══════════════════════════════════════════════════════════════════════════════
-function extractFlatFromRow(row, headers, buildingName, sheetName, lastFloor) {
-    // ── ID ─────────────────────────────────────────────────────────────────────
-    const idRaw = headers.id !== undefined ? String(row[headers.id] ?? "").trim() : "";
-    // Числа с точкой — вероятно, площадь, а не ID (например 47.5 или 101.2)
-    const idIsFloat = /^\d+[.\u0589\u2024\u00b7]\d+$/.test(idRaw);
-    let id = idRaw && /\d/.test(idRaw) && !idIsFloat ? idRaw : null;
-
-    // Если ID не найден в известной колонке — ищем в остальных ячейках
-    if (!id) {
-        const skipCols = new Set(Object.values(headers));
-        for (let c = 0; c < row.length; c++) {
-            if (skipCols.has(c)) continue;
-            const cell = String(row[c] || "").trim();
-            const num = parseNumericCell(cell);
-            const cellIsFloat = /^\d+[.\u0589\u2024\u00b7]\d+$/.test(cell);
-            if (
-                cell &&
-                /\d/.test(cell) &&
-                cell.length <= 15 &&
-                !cellIsFloat &&
-                (!num || (!looksLikeArea(num) && !looksLikePrice(num)))
-            ) {
-                id = cell;
-                break;
-            }
-        }
-    }
-
+function extractFlatFromRow(row, headers, buildingName, sheetName, lastFloor, startCol = 0, endCol = row.length - 1) {
     // ── Площадь ─────────────────────────────────────────────────────────────
     let area = null;
     if (headers.new_area !== undefined && row[headers.new_area] != null) {
@@ -52,7 +25,7 @@ function extractFlatFromRow(row, headers, buildingName, sheetName, lastFloor) {
     if (area === null && headers.area !== undefined && row[headers.area] != null) {
         area = parseNumericCell(row[headers.area]);
     }
-    if (area === null) area = findAreaInRow(row, Object.values(headers));
+    if (area === null) area = findAreaInRow(row, Object.values(headers), startCol, endCol);
 
     const area_orig = headers.area !== undefined
         ? parseNumericCell(row[headers.area])
@@ -69,7 +42,7 @@ function extractFlatFromRow(row, headers, buildingName, sheetName, lastFloor) {
     }
 
     if (price === null) {
-        const pInfo = findPriceAndCurrencyInRow(row, Object.values(headers));
+        const pInfo = findPriceAndCurrencyInRow(row, Object.values(headers), startCol, endCol);
         if (pInfo) {
             price = pInfo.value;
             currency = pInfo.currency;
@@ -86,10 +59,44 @@ function extractFlatFromRow(row, headers, buildingName, sheetName, lastFloor) {
     }
 
     // Fallback: анализ незанятых ячеек
-    const fb = extractFallbackValues(row, Object.values(headers), area, price, price_sqm, currency);
+    const fb = extractFallbackValues(row, Object.values(headers), area, price, price_sqm, currency, startCol, endCol);
     price = fb.price;
     price_sqm = fb.price_sqm;
     if (fb.currency && !currency) currency = fb.currency;
+
+    // ── ID ─────────────────────────────────────────────────────────────────────
+    const idRaw = headers.id !== undefined ? String(row[headers.id] ?? "").trim() : "";
+    // Числа с точкой — вероятно, площадь, а не ID (например 47.5 или 101.2)
+    const idIsFloat = /^\d+[.\u0589\u2024\u00b7]\d+$/.test(idRaw);
+    let id = idRaw && /\d/.test(idRaw) && !idIsFloat ? idRaw : null;
+
+    // Если ID не найден в известной колонке — ищем в остальных ячейках ПОСЛЕ извлечения цены и площади
+    if (!id) {
+        const skipCols = new Set(Object.values(headers));
+        for (let c = startCol; c <= Math.min(endCol, row.length - 1); c++) {
+            if (skipCols.has(c)) continue;
+            const cellValRaw = row[c];
+            const cell = String(cellValRaw || "").trim();
+            const num = parseNumericCell(cellValRaw); // Parse the raw value to avoid string conversion issues during check
+            const cellIsFloat = /^\d+[.\u0589\u2024\u00b7]\d+$/.test(cell);
+            const isFloorText = /^\d+\s*[-‐֊]?(ին|րդ|th|st|nd|rd|ый|ой|ий|ая|яя|ье)$/i.test(cell) || /հարկ|этаж|floor/i.test(cell);
+
+            // Если это значение уже распознано как цена или площадь, пропускаем его
+            if (num !== null && (num === area || num === price || num === price_sqm)) continue;
+
+            if (
+                cell &&
+                /\d/.test(cell) &&
+                cell.length <= 15 &&
+                !cellIsFloat &&
+                !isFloorText &&
+                (!num || (!looksLikeArea(num) && !looksLikePrice(num)))
+            ) {
+                id = cell;
+                break; // Found the best candidate for ID
+            }
+        }
+    }
 
     // ── Комнаты / Статус ────────────────────────────────────────────────────
     const rooms = headers.rooms !== undefined
@@ -121,9 +128,26 @@ function extractFlatFromRow(row, headers, buildingName, sheetName, lastFloor) {
 // ═══════════════════════════════════════════════════════════════════════════════
 // Обработка листа: есть строка заголовков
 // ═══════════════════════════════════════════════════════════════════════════════
-export function processHeaderBlock(data, blockInfo, buildingName, sheetName, allFlats) {
-    const { rowIndex, headers } = blockInfo;
+export function processHeaderBlock(data, blockInfo, fallbackBuildingName, sheetName, allFlats) {
+    const { rowIndex, headers, startCol, endCol } = blockInfo;
     let lastFloor = null;
+
+    let buildingName = fallbackBuildingName;
+    for (let r = rowIndex - 1; r >= Math.max(0, rowIndex - 3); r--) {
+        const titleRow = data[r];
+        if (!titleRow) continue;
+        for (let c = startCol; c <= endCol; c++) {
+            if (titleRow[c] && typeof titleRow[c] === 'string' && titleRow[c].trim().length > 3) {
+                const t = titleRow[c].trim();
+                // Avoid using generic terms like "total" as building name
+                if (!t.toLowerCase().includes("ընդամենը") && !t.toLowerCase().includes("total")) {
+                    buildingName = t;
+                    break;
+                }
+            }
+        }
+        if (buildingName !== fallbackBuildingName) break;
+    }
 
     for (let i = rowIndex + 1; i < data.length; i++) {
         const row = data[i];
@@ -140,7 +164,7 @@ export function processHeaderBlock(data, blockInfo, buildingName, sheetName, all
             }
         }
 
-        const extracted = extractFlatFromRow(row, headers, buildingName, sheetName, lastFloor);
+        const extracted = extractFlatFromRow(row, headers, buildingName, sheetName, lastFloor, startCol, endCol);
         if (!extracted.id && !extracted.area && !extracted.price) continue;
 
         const rawFlat = {

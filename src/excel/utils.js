@@ -170,8 +170,8 @@ export function classifyPrice(val, currency) {
     }
 }
 
-export function findPriceAndCurrencyInRow(row, excludeCols = []) {
-    for (let col = 0; col < row.length; col++) {
+export function findPriceAndCurrencyInRow(row, excludeCols = [], startCol = 0, endCol = row.length - 1) {
+    for (let col = startCol; col <= Math.min(endCol, row.length - 1); col++) {
         if (excludeCols.includes(col)) continue;
         const cell = String(row[col] || "");
         if (hasCurrencySymbol(cell)) {
@@ -182,8 +182,8 @@ export function findPriceAndCurrencyInRow(row, excludeCols = []) {
     return null;
 }
 
-export function findAreaInRow(row, excludeCols = []) {
-    for (let col = 0; col < row.length; col++) {
+export function findAreaInRow(row, excludeCols = [], startCol = 0, endCol = row.length - 1) {
+    for (let col = startCol; col <= Math.min(endCol, row.length - 1); col++) {
         if (excludeCols.includes(col)) continue;
         const cell = String(row[col] || "");
         if (hasAreaSymbol(cell)) {
@@ -193,14 +193,14 @@ export function findAreaInRow(row, excludeCols = []) {
     return null;
 }
 
-export function extractFallbackValues(row, skipColsRaw, area, currentPrice, currentPriceSqm, currentCurrency) {
+export function extractFallbackValues(row, skipColsRaw, area, currentPrice, currentPriceSqm, currentCurrency, startCol = 0, endCol = row.length - 1) {
     const skipCols = new Set(skipColsRaw);
     let price = currentPrice;
     let price_sqm = currentPriceSqm;
     let currency = currentCurrency;
 
     const unused = [];
-    for (let c = 0; c < row.length; c++) {
+    for (let c = startCol; c <= Math.min(endCol, row.length - 1); c++) {
         if (skipCols.has(c)) continue;
         const cellStr = String(row[c] || "");
         const val = parseNumericCell(row[c]);

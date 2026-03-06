@@ -13,12 +13,16 @@ import {
 } from "./utils.js";
 
 export function detectHeaderRow(data) {
+    let bestRow = null;
+    let maxMatches = 0;
+
     for (let i = 0; i < Math.min(10, data.length); i++) {
         const row = data[i];
         if (!row) continue;
         let matches = 0;
         for (const cell of row) {
             const text = normalizeText(cell);
+            if (!text) continue;
             for (const keywords of Object.values(HEADER_KEYWORDS)) {
                 if (keywords.some(kw => kwMatches(text, kw))) {
                     matches++;
@@ -26,9 +30,13 @@ export function detectHeaderRow(data) {
                 }
             }
         }
-        if (matches >= 2) return i;
+        if (matches > maxMatches) {
+            maxMatches = matches;
+            bestRow = i;
+        }
     }
-    return null;
+
+    return maxMatches >= 2 ? bestRow : null;
 }
 
 // Our 100% reliable heuristic fallback
@@ -253,20 +261,23 @@ export function hasHeaderRow(data) {
         const isEmpty = c === combinedRow.length || !combinedRow[c];
         if (isEmpty) {
             gap++;
-            if (gap >= 2 && c > start + gap) {
-                const slice = combinedRow.slice(start, c - gap);
-                const hasKeyword = slice.some(cell => {
-                    if (!cell) return false;
-                    const text = normalizeText(cell);
-                    return Object.values(HEADER_KEYWORDS).some(kws =>
-                        kws.some(kw => kwMatches(text, kw))
-                    );
-                });
-                if (hasKeyword) tableBlocks.push({ startCol: start, endCol: c - gap - 1 });
+            if (gap >= 1) { // We use gap >= 1 to catch side-by-side tables separated by only 1 empty column
+                const lastValidCol = c - gap;
+                if (lastValidCol >= start) {
+                    const slice = combinedRow.slice(start, lastValidCol + 1);
+                    const hasKeyword = slice.some(cell => {
+                        if (!cell) return false;
+                        const text = normalizeText(cell);
+                        return Object.values(HEADER_KEYWORDS).some(kws =>
+                            kws.some(kw => kwMatches(text, kw))
+                        );
+                    });
+                    if (hasKeyword) tableBlocks.push({ startCol: start, endCol: lastValidCol });
+                }
                 start = c;
             }
         } else {
-            if (gap >= 2) start = c;
+            if (gap >= 1) start = c;
             gap = 0;
         }
     }
