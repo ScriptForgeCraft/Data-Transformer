@@ -73,11 +73,11 @@ export const CURRENCY_SYMBOLS = ["$", "֏", "€", "₽", "usd", "amd", "eur", "
 export const AREA_SYMBOLS = ["մ²", "м²", "sqm", "sq.m", "кв.м", "m2", "մ2", "մ 2", "м2"];
 
 // Price thresholds for heuristic detection
-export const PRICE_MIN_THRESHOLD = 1_000_000;   // values above this COULD be price
+export const PRICE_MIN_THRESHOLD = 2_500_000;   // values above this COULD be price
 export const PRICE_SAFE_THRESHOLD = 10_000_000; // values above this are almost certainly price
 export const AREA_MIN = 10;
-export const AREA_MAX = 1000;
+export const AREA_MAX = 500;
 export const FLOOR_MIN = -5;
-export const FLOOR_MAX = 150;
+export const FLOOR_MAX = 100;
 export const ROOMS_MIN = 1;
 export const ROOMS_MAX = 20;
